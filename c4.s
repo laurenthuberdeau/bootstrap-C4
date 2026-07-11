@@ -28,10 +28,15 @@
 #     (sometimes rdx) as a scratch register.  No value is ever kept in
 #     a register across a call: every C statement starts by loading its
 #     operands from memory and ends by storing its result to memory.
-#   - Functions use the System V AMD64 calling convention so that libc
-#     (printf, malloc, open, read, close, memset, memcmp, free, exit)
-#     can be called directly: integer args in rdi, rsi, rdx, rcx, r8,
-#     r9; result in rax; al = 0 before variadic calls (printf, open).
+#   - Functions use the System V AMD64 calling convention: integer
+#     args in rdi, rsi, rdx, rcx, r8, r9; result in rax; al = 0 before
+#     variadic calls (printf, open).  The binary is freestanding: the
+#     functions c4.c takes from libc (printf, malloc, open, read,
+#     close, memset, memcmp, free, exit) are implemented at the bottom
+#     of this file ("freestanding runtime") with direct Linux
+#     syscalls, and _start replaces the C runtime.  printf supports
+#     only what c4 needs: %d, %s and %c, with an optional width and
+#     "." precision (digits or *).
 #   - Character constants appear as decimal numbers with the character
 #     in a comment (e.g. "cmp rax, 10" for '\n').
 #   - GAS Intel syntax reserves some words as expression operators
@@ -44,8 +49,9 @@
 #   - Instruction subset: mov, movsx, movzx, cdqe, cqo, push, pop,
 #     add, sub, imul, idiv, neg, and, or, xor, shl, sar, cmp, test,
 #     sete/setne/setl/setg/setle/setge, jmp, je/jne/jl/jle/jg/jge,
-#     call, ret.
-#   - Assemble and link with:  gcc -no-pie c4.s -o c4
+#     call, ret; the freestanding runtime additionally uses lea, div,
+#     jns/jle and syscall.
+#   - Assemble and link with:  gcc -nostdlib -static -no-pie c4.s -o c4
 
 .intel_syntax noprefix
 
@@ -3533,5 +3539,334 @@ main:
         ret
 #:  }
 #:}
+
+# ----------------------------------------------------------------------
+# Freestanding runtime.
+#
+# Everything below replaces libc and the C runtime so that the binary
+# is self-contained: _start replaces crt0, and the nine functions c4.c
+# uses (open, read, close, printf, malloc, free, memset, memcmp, exit)
+# are implemented with direct Linux x86-64 syscalls.  The call sites
+# above are unchanged: these functions keep the same names and the
+# System V AMD64 calling convention.
+#
+# printf implements only the conversions c4 and the programs it runs
+# need: %d, %s and %c, each with an optional decimal width and an
+# optional precision ("." followed by digits or "*").  Any other
+# character after '%' is output literally (which also handles "%%").
+# Every byte is emitted the moment it is produced, one write syscall
+# each, with no buffering anywhere; it returns the number of bytes
+# written, like libc printf.  Two deviations from libc: %d prints the
+# full 64-bit value (c4's "int" is long long), where glibc's %d would
+# truncate the argument to 32 bits; and the field width is honored for
+# %s and %c only, not %d (c4 never uses a width with %d, and honoring
+# it would require knowing the digit count before emitting).
+# ----------------------------------------------------------------------
+
+.bss
+.align 8
+pf_count:       .space 8             # bytes written by the current printf
+pf_char:        .space 1             # the byte pf_putc hands to write()
+
+.text
+
+# ---- process entry and exit -----------------------------------------
+
+.globl _start
+_start:                              # exit(main(argc, argv))
+        mov rdi, [rsp]               # argc
+        lea rsi, [rsp+8]             # argv
+        call main
+        mov rdi, rax                 # fall through into exit
+.globl exit
+exit:                                # exit(status)
+        mov eax, 60                  # SYS_exit
+        syscall
+
+# ---- file I/O --------------------------------------------------------
+
+.globl open
+open:                                # open(path, flags) -> fd or < 0
+        xor edx, edx                 # mode (unused: c4 never creates)
+        mov eax, 2                   # SYS_open
+        syscall
+        ret
+
+.globl read
+read:                                # read(fd, buf, count) -> n or < 0
+        xor eax, eax                 # SYS_read
+        syscall
+        ret
+
+.globl close
+close:                               # close(fd) -> 0 or < 0
+        mov eax, 3                   # SYS_close
+        syscall
+        ret
+
+# ---- memory ----------------------------------------------------------
+
+.globl malloc
+malloc:                              # malloc(size) -> ptr or 0
+        mov rsi, rdi                 # length
+        xor edi, edi                 # addr = 0 (kernel chooses)
+        mov edx, 3                   # PROT_READ|PROT_WRITE
+        mov r10d, 0x22               # MAP_PRIVATE|MAP_ANONYMOUS
+        mov r8, -1                   # fd = -1
+        xor r9d, r9d                 # offset = 0
+        mov eax, 9                   # SYS_mmap
+        syscall
+        test rax, rax                # errors are small negative values
+        jns .Lrt_malloc_ok
+        xor eax, eax                 # failure -> 0, like malloc
+.Lrt_malloc_ok:
+        ret
+
+.globl free
+free:                                # free(ptr): no-op (mappings are
+        ret                          # reclaimed by the kernel on exit)
+
+.globl memset
+memset:                              # memset(s, c, n) -> s
+        mov rax, rdi
+.Lrt_ms_loop:
+        test rdx, rdx
+        je .Lrt_ms_done
+        mov [rdi], sil
+        add rdi, 1
+        sub rdx, 1
+        jmp .Lrt_ms_loop
+.Lrt_ms_done:
+        ret
+
+.globl memcmp
+memcmp:                              # memcmp(s1, s2, n) -> <0, 0, >0
+        xor eax, eax
+.Lrt_mc_loop:
+        test rdx, rdx
+        je .Lrt_mc_done
+        movzx eax, byte ptr [rdi]
+        movzx ecx, byte ptr [rsi]
+        sub eax, ecx
+        jne .Lrt_mc_done
+        add rdi, 1
+        add rsi, 1
+        sub rdx, 1
+        jmp .Lrt_mc_loop
+.Lrt_mc_done:
+        ret
+
+# ---- printf ----------------------------------------------------------
+
+# pf_putc(c): write the single byte c (in dil) to fd 1 and count it.
+pf_putc:
+        mov [pf_char], dil
+        mov edi, 1                   # fd 1 (stdout)
+        mov esi, offset pf_char
+        mov edx, 1
+        mov eax, 1                   # SYS_write
+        syscall
+        test rax, rax
+        jle .Lrt_pc_done             # error: drop the byte silently
+        add qword ptr [pf_count], 1
+.Lrt_pc_done:
+        ret
+
+# pf_putu(n): print n as unsigned decimal.  Recursing on n/10 before
+# emitting the digit n%10 yields the digits most significant first,
+# so each one can be written the moment it is produced.
+pf_putu:
+        mov rax, rdi
+        mov esi, 10
+        xor edx, edx
+        div rsi
+        push rdx                     # remainder: the last digit
+        test rax, rax
+        je .Lrt_pu_digit
+        mov rdi, rax
+        call pf_putu
+.Lrt_pu_digit:
+        pop rdi
+        add edi, 48                  # '0'
+        call pf_putc
+        ret
+
+# printf(fmt, ...) -> bytes written.  The five possible value arguments
+# arrive in rsi, rdx, rcx, r8, r9 (c4's PRTF opcode passes exactly
+# these; al is ignored since there are never floating-point args) and
+# are spilled to a stack array indexed by pf_argi.
+.globl printf
+printf:
+        push rbp
+        mov rbp, rsp
+        sub rsp, 112
+        pf_args  = -48               # spilled args: [rbp+pf_args+i*8]
+        pf_fmt   = -56               # cursor into the format string
+        pf_argi  = -64               # index of the next argument
+        pf_width = -72               # field width; then the pad count
+        pf_prec  = -80               # precision (-1 = none)
+        pf_item  = -88               # bytes to emit for one conversion
+        pf_len   = -96               # their length
+        pf_buf   = -104              # one-byte home for %c and literals
+        mov [rbp+pf_args], rsi
+        mov [rbp+pf_args+8], rdx
+        mov [rbp+pf_args+16], rcx
+        mov [rbp+pf_args+24], r8
+        mov [rbp+pf_args+32], r9
+        mov [rbp+pf_fmt], rdi
+        mov qword ptr [pf_count], 0
+        mov qword ptr [rbp+pf_argi], 0
+
+.Lrt_pf_loop:
+        # emit literal characters until the next '%' or the final NUL
+        mov rcx, [rbp+pf_fmt]
+        movzx edx, byte ptr [rcx]
+        test edx, edx
+        je .Lrt_pf_end
+        add rcx, 1
+        mov [rbp+pf_fmt], rcx
+        cmp edx, 37                  # '%'
+        je .Lrt_pf_percent
+        mov edi, edx
+        call pf_putc
+        jmp .Lrt_pf_loop
+
+        # optional decimal field width
+.Lrt_pf_percent:
+        mov qword ptr [rbp+pf_width], 0
+        mov qword ptr [rbp+pf_prec], -1
+.Lrt_pf_width:
+        movzx edx, byte ptr [rcx]
+        cmp edx, 48                  # '0'
+        jl .Lrt_pf_width_done
+        cmp edx, 57                  # '9'
+        jg .Lrt_pf_width_done
+        mov rax, [rbp+pf_width]
+        imul rax, rax, 10
+        add rax, rdx
+        sub rax, 48                  # '0'
+        mov [rbp+pf_width], rax
+        add rcx, 1
+        jmp .Lrt_pf_width
+.Lrt_pf_width_done:
+
+        # optional precision: '.' then digits or '*'
+        cmp edx, 46                  # '.'
+        jne .Lrt_pf_conv
+        add rcx, 1
+        mov qword ptr [rbp+pf_prec], 0
+        movzx edx, byte ptr [rcx]
+        cmp edx, 42                  # '*'
+        jne .Lrt_pf_prec
+        mov rax, [rbp+pf_argi]       # '*': precision is the next arg
+        mov rdx, [rbp+pf_args+rax*8]
+        add rax, 1
+        mov [rbp+pf_argi], rax
+        mov [rbp+pf_prec], rdx
+        add rcx, 1
+        jmp .Lrt_pf_conv
+.Lrt_pf_prec:
+        movzx edx, byte ptr [rcx]
+        cmp edx, 48                  # '0'
+        jl .Lrt_pf_conv
+        cmp edx, 57                  # '9'
+        jg .Lrt_pf_conv
+        mov rax, [rbp+pf_prec]
+        imul rax, rax, 10
+        add rax, rdx
+        sub rax, 48                  # '0'
+        mov [rbp+pf_prec], rax
+        add rcx, 1
+        jmp .Lrt_pf_prec
+
+        # conversion character
+.Lrt_pf_conv:
+        movzx edx, byte ptr [rcx]
+        add rcx, 1
+        mov [rbp+pf_fmt], rcx
+        test edx, edx                # format ends with a lone '%'
+        je .Lrt_pf_end
+        cmp edx, 100                 # 'd'
+        je .Lrt_pf_d
+        cmp edx, 115                 # 's'
+        je .Lrt_pf_s
+        cmp edx, 99                  # 'c'
+        je .Lrt_pf_c
+        mov [rbp+pf_buf], dl         # anything else: emit it literally
+        lea rax, [rbp+pf_buf]
+        mov [rbp+pf_item], rax
+        mov qword ptr [rbp+pf_len], 1
+        jmp .Lrt_pf_emit
+
+.Lrt_pf_d:                           # signed decimal (width ignored)
+        mov rax, [rbp+pf_argi]
+        mov rdx, [rbp+pf_args+rax*8]
+        add rax, 1
+        mov [rbp+pf_argi], rax
+        mov [rbp+pf_item], rdx
+        test rdx, rdx
+        jns .Lrt_pf_d_mag
+        mov edi, 45                  # '-'
+        call pf_putc
+        neg qword ptr [rbp+pf_item]
+.Lrt_pf_d_mag:
+        mov rdi, [rbp+pf_item]
+        call pf_putu
+        jmp .Lrt_pf_loop
+
+.Lrt_pf_s:                           # string, up to NUL or precision
+        mov rax, [rbp+pf_argi]
+        mov rdx, [rbp+pf_args+rax*8]
+        add rax, 1
+        mov [rbp+pf_argi], rax
+        mov [rbp+pf_item], rdx
+        xor ecx, ecx
+.Lrt_pf_s_len:
+        cmp rcx, [rbp+pf_prec]       # never true when prec is -1
+        je .Lrt_pf_s_done
+        cmp byte ptr [rdx+rcx], 0
+        je .Lrt_pf_s_done
+        add rcx, 1
+        jmp .Lrt_pf_s_len
+.Lrt_pf_s_done:
+        mov [rbp+pf_len], rcx
+        jmp .Lrt_pf_emit
+
+.Lrt_pf_c:                           # single character
+        mov rax, [rbp+pf_argi]
+        mov rdx, [rbp+pf_args+rax*8]
+        add rax, 1
+        mov [rbp+pf_argi], rax
+        mov [rbp+pf_buf], dl
+        lea rax, [rbp+pf_buf]
+        mov [rbp+pf_item], rax
+        mov qword ptr [rbp+pf_len], 1
+
+.Lrt_pf_emit:                        # space-pad to the field width,
+        mov rax, [rbp+pf_width]      # then emit the conversion itself
+        sub rax, [rbp+pf_len]
+        mov [rbp+pf_width], rax      # width slot now holds pad count
+.Lrt_pf_pad:
+        cmp qword ptr [rbp+pf_width], 0
+        jle .Lrt_pf_put
+        mov edi, 32                  # ' '
+        call pf_putc
+        sub qword ptr [rbp+pf_width], 1
+        jmp .Lrt_pf_pad
+.Lrt_pf_put:
+        cmp qword ptr [rbp+pf_len], 0
+        je .Lrt_pf_loop
+        mov rax, [rbp+pf_item]
+        movzx edi, byte ptr [rax]
+        add qword ptr [rbp+pf_item], 1
+        sub qword ptr [rbp+pf_len], 1
+        call pf_putc
+        jmp .Lrt_pf_put
+
+.Lrt_pf_end:
+        mov rax, [pf_count]
+        mov rsp, rbp
+        pop rbp
+        ret
 
 .section .note.GNU-stack,"",@progbits
