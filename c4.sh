@@ -14,6 +14,19 @@ MAX_CYCLE=10000000 # Infinite loop breaker.
 # Opcodes
 LEA=0; IMM=1; REF=2; JMP=3; JSR=4; BZ=5; BNZ=6; ENT=7; ADJ=8; LEV=9; LI=10; LC=11; SI=12; SC=13; PSH=14; OR=15; XOR=16; AND=17; EQ=18; NE=19; LT=20; GT=21; LE=22; GE=23; SHL=24; SHR=25; ADD=26; SUB=27; MUL=28; DIV=29; MOD=30; OPEN=31; READ=32; CLOS=33; PRTF=34; MALC=35; FREE=36; MSET=37; MCMP=38; EXIT=39;
 
+# Some shell implementations use types with higher than 32-bit precision
+# (int64_t or double). To make the behavior of the VM consistent across shell
+# implementations, we normalize the arithmetic to 32-bit signed integers
+# (matching c4's `int`). Simply keeping the lower 32 bits is not enough, since
+# it may clear the sign bit. We sign-extend the value by flipping the sign bit
+# and subtracting 2^31. The end result varies depending on the sign bit:
+#   - sign bit = 1: `^` clears it and `-` makes the value negative.
+#   - sign bit = 0: `^` sets it and `-` clears it, leaving the value unchanged.
+#
+# Note that this does not completely work when the shell uses double precision
+# floating point numbers, since they can only represent integers up to 2^53.
+norm32() { a=$(( ( ($1 & 4294967295) ^ 2147483648 ) - 2147483648 )); }
+
 INITIAL_STACK_POS=10000000
 INITIAL_HEAP_POS=0
 sp=$INITIAL_STACK_POS
@@ -591,22 +604,22 @@ run_instructions() {
       "$SI") : $((_data_$((_data_$sp))=$a)) ; : $((sp += 1)) ;;  # *(int *)*sp++ = a;
       "$SC") : $((_data_$((_data_$sp))=$a)) ; : $((sp += 1)) ;;  # a = *(char *)*sp++ = a;
       "$PSH") push_stack "$a" ;;                # *--sp = a;
-      "$OR")  pop_stack; a=$((res | a)) ;;
-      "$XOR") pop_stack; a=$((res ^ a)) ;;
-      "$AND") pop_stack; a=$((res & a)) ;;
-      "$EQ")  pop_stack; a=$((res == a)) ;;
-      "$NE")  pop_stack; a=$((res != a)) ;;
-      "$LT")  pop_stack; a=$((res < a)) ;;
-      "$GT")  pop_stack; a=$((res > a)) ;;
-      "$LE")  pop_stack; a=$((res <= a)) ;;
-      "$GE")  pop_stack; a=$((res >= a)) ;;
-      "$SHL") pop_stack; a=$((res << a)) ;;
-      "$SHR") pop_stack; a=$((res >> a)) ;;
-      "$ADD") pop_stack; a=$((res + a)) ;;
-      "$SUB") pop_stack; a=$((res - a)) ;;
-      "$MUL") pop_stack; a=$((res * a)) ;;
-      "$DIV") pop_stack; a=$((res / a)) ;;
-      "$MOD") pop_stack; a=$((res % a)) ;;
+      "$OR")  pop_stack; norm32 $((res | a))  ;;  # a = *sp++ |  a;
+      "$XOR") pop_stack; norm32 $((res ^ a))  ;;  # a = *sp++ ^  a;
+      "$AND") pop_stack; norm32 $((res & a))  ;;  # a = *sp++ &  a;
+      "$EQ")  pop_stack; norm32 $((res == a)) ;;  # a = *sp++ == a;
+      "$NE")  pop_stack; norm32 $((res != a)) ;;  # a = *sp++ != a;
+      "$LT")  pop_stack; norm32 $((res < a))  ;;  # a = *sp++ <  a;
+      "$GT")  pop_stack; norm32 $((res > a))  ;;  # a = *sp++ >  a;
+      "$LE")  pop_stack; norm32 $((res <= a)) ;;  # a = *sp++ <= a;
+      "$GE")  pop_stack; norm32 $((res >= a)) ;;  # a = *sp++ >= a;
+      "$SHL") pop_stack; norm32 $((res << a)) ;;  # a = *sp++ << a;
+      "$SHR") pop_stack; norm32 $((res >> a)) ;;  # a = *sp++ >> a;
+      "$ADD") pop_stack; norm32 $((res + a))  ;;  # a = *sp++ +  a;
+      "$SUB") pop_stack; norm32 $((res - a))  ;;  # a = *sp++ -  a;
+      "$MUL") pop_stack; norm32 $((res * a))  ;;  # a = *sp++ *  a;
+      "$DIV") pop_stack; norm32 $((res / a))  ;;  # a = *sp++ /  a;
+      "$MOD") pop_stack; norm32 $((res % a))  ;;  # a = *sp++ %  a;
       "$OPEN")                                  # a = open((char *)sp[1], *sp);
         # We represent file descriptors as strings. That means that modes and offsets do not work.
         # These limitations are acceptable since c4.cc does not use them.
