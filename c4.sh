@@ -666,9 +666,7 @@ run() {
     set -u # Exit on using unset variable
   fi
   read_data # Load data into heap, bump_ptr is set to the end of the data
-  get_num   # Get address of main function
   code_start=$bump_ptr
-  main_addr=$((value + bump_ptr))
   read_instructions $INITIAL_HEAP_POS $code_start
   last_instr=$bump_ptr
   if [ $debug -eq 1 ] ; then
@@ -676,7 +674,7 @@ run() {
   fi
 
   # sp=0;
-  pc=$main_addr; bp=$sp; a=0; cycle=0; # vm registers
+  pc=$code_start; bp=$sp; a=0; cycle=0; # vm registers
   i=0; t=0 # temps
 
   # setup first stack frame

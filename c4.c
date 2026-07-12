@@ -18,6 +18,7 @@ char *p, *lp,    // current position in source code
      *datastart; // start of data/bss region
 
 int *e, *le,  // current position in emitted code
+    *estart,  // start of emitted code
     *id,      // currently parsed identifier
     *sym,     // symbol table (simple list of identifiers)
     tk,       // current token
@@ -230,12 +231,12 @@ void expr(int lev)
       *++e = BZ; d = ++e;
       expr(Assign);
       if (tk == ':') next(); else { printf("%d: conditional missing colon\n", line); exit(-1); }
-      *d = (int)(e + 3); *++e = JMP; d = ++e;
+      *d = e + 3 - estart; *++e = JMP; d = ++e;
       expr(Cond);
-      *d = (int)(e + 1);
+      *d = e + 1 - estart;
     }
-    else if (tk == Lor) { next(); *++e = BNZ; d = ++e; expr(Lan); *d = (int)(e + 1); ty = INT; }
-    else if (tk == Lan) { next(); *++e = BZ;  d = ++e; expr(Or);  *d = (int)(e + 1); ty = INT; }
+    else if (tk == Lor) { next(); *++e = BNZ; d = ++e; expr(Lan); *d = e + 1 - estart; ty = INT; }
+    else if (tk == Lan) { next(); *++e = BZ;  d = ++e; expr(Or);  *d = e + 1 - estart; ty = INT; }
     else if (tk == Or)  { next(); *++e = PSH; expr(Xor); *++e = OR;  ty = INT; }
     else if (tk == Xor) { next(); *++e = PSH; expr(And); *++e = XOR; ty = INT; }
     else if (tk == And) { next(); *++e = PSH; expr(Eq);  *++e = AND; ty = INT; }
@@ -296,11 +297,11 @@ void stmt()
     *++e = BZ; b = ++e;
     stmt();
     if (tk == Else) {
-      *b = (int)(e + 3); *++e = JMP; b = ++e;
+      *b = e + 3 - estart; *++e = JMP; b = ++e;
       next();
       stmt();
     }
-    *b = (int)(e + 1);
+    *b = e + 1 - estart;
   }
   else if (tk == While) {
     next();
@@ -310,8 +311,8 @@ void stmt()
     if (tk == ')') next(); else { printf("%d: close paren expected\n", line); exit(-1); }
     *++e = BZ; b = ++e;
     stmt();
-    *++e = JMP; *++e = (int)a;
-    *b = (int)(e + 1);
+    *++e = JMP; *++e = a - estart;
+    *b = e + 1 - estart;
   }
   else if (tk == Return) {
     next();
@@ -339,8 +340,6 @@ int main(signed argc, char **argv)
   int *pc, *sp, *bp, a, cycle; // vm registers
   int i, *t; // temps
 
-  int *estart;  // start of emitted code
-
   --argc; ++argv;
   if (argc > 0 && **argv == '-' && (*argv)[1] == 's') { src = 1; --argc; ++argv; }
   if (argc > 0 && **argv == '-' && (*argv)[1] == 'd') { debug = 1; --argc; ++argv; }
@@ -359,6 +358,11 @@ int main(signed argc, char **argv)
   memset(sym,  0, poolsz);
   memset(e,    0, poolsz);
   memset(data, 0, poolsz);
+
+  // Reserve the first two code words for the jump-to-main code. estart thus
+  // points at the true start of the code segment, so every jump immediate is a
+  // plain word index from it.
+  le = e = estart + 1;
 
   p = "char else enum if int return sizeof while "
       "open read close printf malloc free memset memcmp exit void main";
@@ -409,7 +413,7 @@ int main(signed argc, char **argv)
       id[Type] = ty;
       if (tk == '(') { // function
         id[Class] = Fun;
-        id[Val] = (int)(e + 1);
+        id[Val] = e + 1 - estart;
         next(); i = 0;
         while (tk != ')') {
           ty = INT;
@@ -467,7 +471,8 @@ int main(signed argc, char **argv)
     next();
   }
 
-  if (!(pc = (int *)idmain[Val])) { printf("main() not defined\n"); return -1; }
+  if (!idmain[Val]) { printf("main() not defined\n"); return -1; }
+  pc = estart + idmain[Val]; // idmain[Val] is a word index relative to estart
   if (src) return 0;
 
   // setup stack
@@ -482,10 +487,15 @@ int main(signed argc, char **argv)
   // The format is:
   //  <data size>
   //  <data>
-  //  <main address>
   //  <opcodes> \n <opcodes> \n ...
+  // The code starts with the jump to main, so execution start at index 0.
+  // JMP/JSR/BZ/BNZ immediates are word indices relative to the start of the
+  // code segment (estart), so the VM can jump with base + immediate.
+  // REF immediates are byte offsets relative to the start of the data segment
+  // (datastart), so the VM can load with base + immediate.
   if (ops) {
-    estart++; // Instructions start being encoded at position 1. See line containing: *++e = ENT; *++e = i - loc;
+    // Fill in the reserved entry trampoline: JMP <main>.
+    *estart = JMP; estart[1] = pc - estart;
     // <data size>
     printf("%d\n", data - datastart);
     // <data>
@@ -500,19 +510,14 @@ int main(signed argc, char **argv)
     }
     printf("\n");
 
-    // <main address>
-    printf("%d\n", (pc - (int *)estart));
     // <opcodes>
     le = estart;
     while (le <= e) {
       i = *le;
-      // Relocate addresses
       printf("%4.4s", &"LEA ,IMM ,REF ,JMP ,JSR ,BZ  ,BNZ ,ENT ,ADJ ,LEV ,LI  ,LC  ,SI  ,SC  ,PSH ,"
                             "OR  ,XOR ,AND ,EQ  ,NE  ,LT  ,GT  ,LE  ,GE  ,SHL ,SHR ,ADD ,SUB ,MUL ,DIV ,MOD ,"
                             "OPEN,READ,CLOS,PRTF,MALC,FREE,MSET,MCMP,EXIT,"[i * 5]);
-      if (i == JMP || i == JSR || i == BZ || i == BNZ) {
-        printf(" %d\n", ((*++le) - (int) estart) / sizeof(int));
-      } else if (*le <= ADJ) {
+      if (*le <= ADJ) {
          printf(" %d\n", *++le);
       } else {
         printf("\n");
@@ -536,10 +541,10 @@ int main(signed argc, char **argv)
     if      (i == LEA) a = (int)(bp + *pc++);                             // load local address
     else if (i == IMM) a = *pc++;                                         // load global address or immediate
     else if (i == REF) a = *pc++ + (int) datastart;                       // load global address
-    else if (i == JMP) pc = (int *)*pc;                                   // jump
-    else if (i == JSR) { *--sp = (int)(pc + 1); pc = (int *)*pc; }        // jump to subroutine
-    else if (i == BZ)  pc = a ? pc + 1 : (int *)*pc;                      // branch if zero
-    else if (i == BNZ) pc = a ? (int *)*pc : pc + 1;                      // branch if not zero
+    else if (i == JMP) pc = estart + *pc;                                 // jump
+    else if (i == JSR) { *--sp = (int)(pc + 1); pc = estart + *pc; }      // jump to subroutine
+    else if (i == BZ)  pc = a ? pc + 1 : estart + *pc;                    // branch if zero
+    else if (i == BNZ) pc = a ? estart + *pc : pc + 1;                    // branch if not zero
     else if (i == ENT) { *--sp = (int)bp; bp = sp; sp = sp - *pc++; }     // enter subroutine
     else if (i == ADJ) sp = sp + *pc++;                                   // stack adjust
     else if (i == LEV) { sp = bp; bp = (int *)*sp++; pc = (int *)*sp++; } // leave subroutine
