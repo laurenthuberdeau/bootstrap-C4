@@ -1,6 +1,6 @@
 # Collection of bootstrapping tools based on c4
 
-## Original c4 - C in four functions
+## [Original c4 - C in four functions](https://github.com/rswier/c4/tree/master)
 
 > An exercise in minimalism.
 
@@ -23,3 +23,8 @@ implemented in `vm/c4.sh`, or by `vm/c4.c` itself with the `-r` option. The
 bytecode is relocatable, with the jump instructions using offsets from the
 beginning of the bytecode, and the `REF` instruction using offsets from the
 beginning of the global variables.
+
+## [c4 assembly implementation](asm/README.md)
+
+`asm/c4.s` is an implementation of the original `c4.c` in assembly, for use
+in reproducible builds rooted in [`stage0`](https://github.com/oriansj/stage0).
