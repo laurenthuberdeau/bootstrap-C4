@@ -3,6 +3,15 @@
 Reimplementation of [rswier/c4](https://github.com/rswier/c4/tree/master) in
 x86, x86-64, ARM and RISC-V GAS assembly.
 
+> [!NOTE]
+> Note that this is still in an exploratory stage, with some parts of the
+> implementation being mostly LLM-generated. That said, `c4.s` is functional and
+> can be used to bootstrap `c4.c`, which is a good indication that the
+> implementation is correct.
+> Regardless of whether the implementation is LLM-generated or not, the spirit
+> of reproducible builds is to "trust but verify" so don't take anyone's word
+> for it, verify the implementation yourself!
+
 `c4.s` is a freestanding implementation, written using virtual instructions
 (macros) that are bound to architecture-specific instructions at assembly time.
 The runtime functions (`printf`, `memset` and `memcpy`) are also implemented
