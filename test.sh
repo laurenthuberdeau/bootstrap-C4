@@ -56,19 +56,39 @@ run_suite() { # $1 = name, $2 = c4 (with runner), $3 = reference (with
     echo "OK: $name"
 }
 
+# The final binary is the raw image extracted with objcopy -O binary:
+# the ELF header is the hand-written one in elf.s (first bytes of
+# .text), so the linker only resolves addresses and its own ELF
+# framing is discarded.  Every byte of the output therefore comes from
+# a directive in the assembly sources.  (-n: don't page-align .data,
+# so no padding bytes appear between the sections.)
+# $1 = tool prefix ("" for native), $2 = source, $3 = output,
+# $4... = extra as flags, then optionally "--" and extra ld flags.
+build() {
+    _pfx=$1; _src=$2; _out=$3; shift 3
+    _asflags=
+    while [ $# -gt 0 ] && [ "$1" != "--" ]; do _asflags="$_asflags $1"; shift; done
+    [ $# -gt 0 ] && shift
+    "${_pfx}as" $_asflags -I. "$_src" -o "$_out.o"
+    # --no-warn-rwx-segments: the single-LOAD RWX layout is intentional
+    # (see elf.s); the warning is about the intermediate ELF anyway.
+    "${_pfx}ld" "$@" -n --no-warn-rwx-segments -Ttext 0x400000 -o "$_out.elf" "$_out.o"
+    "${_pfx}objcopy" -O binary "$_out.elf" "$_out"
+    chmod +x "$_out"
+}
+
 echo "== x86-64 =="
-gcc -nostdlib -static -no-pie -I. arch/x86_64.s -o "$tmp/c4-x86_64"
-gcc -nostdlib -static -no-pie c4.s -o "$tmp/c4-direct"
-# stripped copies: the symtabs differ by one FILE entry (the as temp name)
-strip -o "$tmp/c4-x86_64.strip" "$tmp/c4-x86_64"
-strip -o "$tmp/c4-direct.strip" "$tmp/c4-direct"
-cmp "$tmp/c4-x86_64.strip" "$tmp/c4-direct.strip" || fail "c4.s and arch/x86_64.s builds differ"
+# -mx86-used-note=no: keep as from injecting a .note.gnu.property section,
+# which would otherwise land in front of the hand-written ELF header.
+build "" arch/x86_64.s "$tmp/c4-x86_64" -mx86-used-note=no
+build "" c4.s "$tmp/c4-direct" -mx86-used-note=no
+cmp "$tmp/c4-x86_64" "$tmp/c4-direct" || fail "c4.s and arch/x86_64.s builds differ"
 echo "OK: both x86-64 entry points produce the same binary"
 gcc -O1 -w c4.c -o "$tmp/ref-x86_64"
 run_suite x86-64 "$tmp/c4-x86_64" "$tmp/ref-x86_64"
 
 echo "== i386 =="
-if gcc -m32 -nostdlib -static -no-pie -I. arch/i386.s -o "$tmp/c4-i386" 2>"$tmp/i386.err"; then
+if build "" arch/i386.s "$tmp/c4-i386" --32 -mx86-used-note=no -- -m elf_i386 2>"$tmp/i386.err"; then
     run_suite i386 "$tmp/c4-i386" "$tmp/c4-x86_64" '; s/^(\s*IMM\s+)[48]$/${1}W/'
 else
     cat "$tmp/i386.err" >&2
@@ -76,10 +96,10 @@ else
 fi
 
 # Cross toolchains go by different triplets per distribution (Debian:
-# aarch64-linux-gnu-gcc, nix: aarch64-unknown-linux-gnu-gcc).
+# aarch64-linux-gnu-as, nix: aarch64-unknown-linux-gnu-as).
 findcross() {
-    for c in "$1-linux-gnu-gcc" "$1-unknown-linux-gnu-gcc"; do
-        if command -v "$c" > /dev/null; then echo "$c"; return; fi
+    for c in "$1-linux-gnu" "$1-unknown-linux-gnu"; do
+        if command -v "$c-as" > /dev/null; then echo "$c"; return; fi
     done
 }
 
@@ -87,11 +107,13 @@ for arch in aarch64 riscv64; do
     echo "== $arch =="
     cross=$(findcross "$arch")
     if [ -z "$cross" ]; then
-        echo "SKIP: no $arch cross gcc installed"
+        echo "SKIP: no $arch cross binutils installed"
     elif ! command -v "qemu-$arch" > /dev/null; then
         echo "SKIP: qemu-$arch not installed"
     else
-        "$cross" -nostdlib -static -I. "arch/$arch.s" -o "$tmp/c4-$arch"
+        # --no-relax: linker relaxation could shrink code against gp,
+        # which is not set up (see arch/riscv64.s); harmless elsewhere.
+        build "$cross-" "arch/$arch.s" "$tmp/c4-$arch" -- --no-relax
         run_suite "$arch" "qemu-$arch $tmp/c4-$arch" "$tmp/c4-x86_64"
     fi
 done

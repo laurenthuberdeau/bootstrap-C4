@@ -30,12 +30,23 @@
 # this body is shared unchanged.
 #
 # Build (from the repository root; the binaries are freestanding, so
-# no libc is needed for any target):
-#     gcc -nostdlib -static -no-pie c4.s -o c4              # native x86-64
-#     gcc -nostdlib -static -no-pie -I. arch/x86_64.s -o c4 # same, explicit
-#     gcc -m32 -nostdlib -static -no-pie -I. arch/i386.s -o c4-i386
-#     aarch64-unknown-linux-gnu-gcc -nostdlib -static -I. arch/aarch64.s -o c4-aarch64
-#     riscv64-unknown-linux-gnu-gcc -nostdlib -static -I. arch/riscv64.s -o c4-riscv64
+# no libc is needed for any target). The executable's own ELF header
+# is hand-written data in elf.s, so the finished binary is the raw
+# image extracted with objcopy: the linker only resolves addresses,
+# and every byte of the output comes from a directive in these
+# sources. For x86-64 (or, equivalently, "as ... -I. c4.s"):
+#
+#     as -mx86-used-note=no -I. arch/x86_64.s -o c4.o
+#     ld -n -Ttext 0x400000 -o c4.elf c4.o
+#     objcopy -O binary c4.elf c4 && chmod +x c4
+#
+# (-mx86-used-note=no keeps as from injecting a .note.gnu.property
+# section in front of the header; -n keeps ld from page-aligning
+# .data, so no padding appears between the sections; -Ttext must
+# match ELF_LOAD in elf.s.) The other targets are the same with
+# their binutils: "as --32" and "ld -m elf_i386" for i386, the
+# aarch64-*/riscv64-* cross tools for the rest (RISC-V additionally
+# wants "ld --no-relax"; see test.sh, which builds every target).
 #
 # Conventions (chosen for reviewability and portability, not speed):
 #   - The virtual machine has two registers, A (accumulator, also the

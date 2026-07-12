@@ -9,11 +9,17 @@
 # in the body.  Arguments follow the System V AMD64 ABI (rdi, rsi, rdx,
 # rcx, r8, r9; al = 0 before variadic calls).
 #
-# Build:  gcc -no-pie arch/x86_64.s -o c4   (from the repo root)
+# Build (from the repo root; see the header of c4.s for the details):
+#     as -mx86-used-note=no -I. arch/x86_64.s -o c4.o
+#     ld -n -Ttext 0x400000 -o c4.elf c4.o && objcopy -O binary c4.elf c4
 
 .intel_syntax noprefix
 
 WORDSZ = 8
+ELF_MACHINE = 62               /* e_machine: EM_X86_64 */
+ELF_FLAGS = 0
+
+.include "elf.s"                /* ELF header, first bytes of .text */
 
 # ---- function structure ----
 .macro vENTER k                  # prologue, \k local words
@@ -797,3 +803,10 @@ malloc:                              # malloc(size) -> ptr or 0
 .include "runtime.s"
 
 .include "c4.s"
+
+# End-of-image labels for the sizes in the ELF program header (elf.s):
+# the file ends with .data, the memory image with .bss.
+.data
+ELF_fileend:
+.bss
+ELF_memend:

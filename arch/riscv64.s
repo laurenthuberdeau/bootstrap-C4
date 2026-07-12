@@ -27,6 +27,10 @@
 # Run with qemu-user:  qemu-riscv64 ./c4-riscv64 hello.c
 
 WORDSZ = 8
+ELF_MACHINE = 243               /* e_machine: EM_RISCV; e_flags: double-float ABI */
+ELF_FLAGS = 0x4
+
+.include "elf.s"                /* ELF header, first bytes of .text */
 
 # ---- function structure ----
 .macro vENTER k                  # prologue, \k local words
@@ -889,3 +893,10 @@ malloc:                              # malloc(size) -> ptr or 0
 .include "runtime.s"
 
 .include "c4.s"
+
+# End-of-image labels for the sizes in the ELF program header (elf.s):
+# the file ends with .data, the memory image with .bss.
+.data
+ELF_fileend:
+.bss
+ELF_memend:

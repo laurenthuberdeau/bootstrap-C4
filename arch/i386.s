@@ -23,6 +23,10 @@
 .intel_syntax noprefix
 
 WORDSZ = 4
+ELF_MACHINE = 3               /* e_machine: EM_386 */
+ELF_FLAGS = 0
+
+.include "elf.s"                /* ELF header, first bytes of .text */
 
 # ---- function structure ----
 .macro vENTER k                  # prologue, \k local words
@@ -665,3 +669,10 @@ malloc:                              # malloc(size) -> ptr or 0
 .include "runtime.s"
 
 .include "c4.s"
+
+# End-of-image labels for the sizes in the ELF program header (elf.s):
+# the file ends with .data, the memory image with .bss.
+.data
+ELF_fileend:
+.bss
+ELF_memend:
