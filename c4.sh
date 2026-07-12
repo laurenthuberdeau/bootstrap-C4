@@ -34,41 +34,36 @@ push_stack() {
   : $((sp -= 1))
   : $((_data_$sp=$1))
 }
-pop_stack() {
-  : $((res = _data_$sp))
+pop_stack() { # $1: return variable
+  : $(($1 = _data_$sp))
   : $((sp += 1))
 }
-at_stack() {
-  : $((res = _data_$(($1 + $sp))))
+at_stack() { # $1: return variable, $2: offset from sp
+  : $(($1 = _data_$(($2 + $sp))))
 }
 
-alloc_memory() {
-  res=$dat
-  : $((dat += $1))
+alloc_memory() { # $1: return variable
+  : $(($1 = bump_ptr))
+  : $((bump_ptr += $1))
   # Need to initialize the memory to 0 or else `set -u` will complain
   if [ $strict_mode -eq 1 ] ; then
     ix=$res
-    while [ $ix -lt $dat ]; do
+    while [ $ix -lt $bump_ptr ]; do
       : $((_data_$ix=0))
       : $((ix += 1))
     done
   fi
 }
 
-dat=$INITIAL_HEAP_POS
+bump_ptr=$INITIAL_HEAP_POS
 push_data() {
-  : $((_data_$dat=$1))
-  : $((dat += 1))
-}
-pop_data() {
-  : $((dat -= 1))
-  : $((res = _data_$dat))
+  : $((_data_$(((bump_ptr += 1) - 1))=$1))
 }
 
 # Push a Shell string to the VM heap. Returns a reference to the string in $addr.
-unpack_string() {
-  addr=$dat
-  src_buf="$1"
+unpack_string() { # $1: return variable, $2: Shell string
+  : $(($1 = bump_ptr))
+  src_buf="$2"
   while [ -n "$src_buf" ] ; do
     char="$src_buf"                    # remember current buffer
     rest="${src_buf#?}"                # remove the first char
@@ -82,7 +77,7 @@ unpack_string() {
 
 # Convert a VM string reference to a Shell string.
 # $res is set to the result, and $len is set to the length of the string.
-pack_string() {
+pack_string() { # $1: reference to VM string, $2: optional delimiter, $3: optional max length
   addr="$1";  shift
   max_len=100000000
   delim=0
@@ -126,24 +121,24 @@ c_printf() {
     if [ $mod -eq 1 ] ; then
       case $head_char in
         'd') # 100 = 'd' Decimal integer
-          at_stack $((count - arg_offset)); : $((arg_offset = arg_offset + 1)); imm=$res
+          at_stack imm $((count - arg_offset)); : $((arg_offset = arg_offset + 1))
           printf "%d" "$imm"
           # str="$str$imm"
           ;;
         'c') # 99 = 'c' Character
-          at_stack $((count - arg_offset)); : $((arg_offset = arg_offset + 1)); char=$res
+          at_stack char $((count - arg_offset)); : $((arg_offset = arg_offset + 1))
           # Don't need to handle non-printable characters the only use of %c is for printable characters
           printf "\\$(printf "%o" "$char")"
           # str="$str$(printf "\\$(printf "%o" "$char")")"
           ;;
         'x') # 120 = 'x' Hexadecimal integer
-          at_stack $((count - arg_offset)); : $((arg_offset = arg_offset + 1)); imm=$res
+          at_stack imm $((count - arg_offset)); : $((arg_offset = arg_offset + 1))
           # Don't need to handle non-printable characters the only use of %c is for printable characters
           printf "%x" "$imm"
           # str="$str$(printf "%x" "$imm")"
           ;;
         's') # 115 = 's' String
-          at_stack $((count - arg_offset)); : $((arg_offset = arg_offset + 1)); str_ref=$res
+          at_stack str_ref $((count - arg_offset)); : $((arg_offset = arg_offset + 1))
           pack_string "$str_ref" # result in $res
           # Note: Using printf "%s" "$res" outputs "\n" if $res contains a newline
           # but printf "$res" seems to work fine.
@@ -154,8 +149,8 @@ c_printf() {
           pack_string $fmt_ptr 0 2 # Read next 2 characters
           fmt_ptr=$((fmt_ptr + 2))
           if [ "$res" = "*s" ]; then
-            at_stack $((count - arg_offset)); : $((arg_offset = arg_offset + 1)); len=$res
-            at_stack $((count - arg_offset)); : $((arg_offset = arg_offset + 1)); str_ref=$res
+            at_stack len $((count - arg_offset)); : $((arg_offset = arg_offset + 1))
+            at_stack str_ref $((count - arg_offset)); : $((arg_offset = arg_offset + 1))
             pack_string $str_ref 0 $len # result in $res
             printf "%s" "$res"
             # str="$str$res"
@@ -178,7 +173,7 @@ c_printf() {
           head_char=$(printf "\\$(printf "%o" "$head")") # Decode
           fmt_ptr=$((fmt_ptr + 1))
           if [ "$head_char" = 's' ]; then
-            at_stack $((count - arg_offset)); : $((arg_offset = arg_offset + 1)); str_ref=$res
+            at_stack str_ref $((count - arg_offset)); : $((arg_offset = arg_offset + 1))
             pack_string $str_ref 0 $str_len # result in $res
               : $((padding_len = $min_len - $len))
             while [ $padding_len -gt 0 ]; do # Pad string so it has at least $min_len characters
@@ -369,13 +364,14 @@ get_num() {
 read_data() {
   get_char
   get_num
+  i=0
   count=$value
 
   if [ $debug -eq 1 ] ; then
     echo "Reading $value bytes of data"
   fi
 
-  while [ "$count" != "0" ] ; do
+  while [ $i -lt $count ] ; do
     get_char_encoded
     if [ $escaped = "true" ] ; then
       code=$char
@@ -383,7 +379,7 @@ read_data() {
     code=$(LC_CTYPE=C printf "%d" "'$char") # convert to integer code
     fi
     push_data $code
-    : $((count -= 1))
+    : $((i += 1))
   done
 
   # Read final newline
@@ -393,50 +389,10 @@ read_data() {
 # Encode instructions to internal representation.
 # To inspect instructions, use decode_instructions and print_instructions.
 encode_instruction() {
-  # This big case statement could be replaced with res=$(( $(($1)) )) but it
-  # wouldn't handle the case where $1 is an invalid instruction, which is useful
-  # for debugging.
   case "$1" in
-    LEA)  res=$LEA ;;
-    IMM)  res=$IMM ;;
-    REF)  res=$REF ;;
-    JMP)  res=$JMP ;;
-    JSR)  res=$JSR ;;
-    BZ)   res=$BZ ;;
-    BNZ)  res=$BNZ ;;
-    ENT)  res=$ENT ;;
-    ADJ)  res=$ADJ ;;
-    LEV)  res=$LEV ;;
-    LI)   res=$LI ;;
-    LC)   res=$LC ;;
-    SI)   res=$SI ;;
-    SC)   res=$SC ;;
-    PSH)  res=$PSH ;;
-    OR)   res=$OR ;;
-    XOR)  res=$XOR ;;
-    AND)  res=$AND ;;
-    EQ)   res=$EQ ;;
-    NE)   res=$NE ;;
-    LT)   res=$LT ;;
-    GT)   res=$GT ;;
-    LE)   res=$LE ;;
-    GE)   res=$GE ;;
-    SHL)  res=$SHL ;;
-    SHR)  res=$SHR ;;
-    ADD)  res=$ADD ;;
-    SUB)  res=$SUB ;;
-    MUL)  res=$MUL ;;
-    DIV)  res=$DIV ;;
-    MOD)  res=$MOD ;;
-    OPEN) res=$OPEN ;;
-    READ) res=$READ ;;
-    CLOS) res=$CLOS ;;
-    PRTF) res=$PRTF ;;
-    MALC) res=$MALC ;;
-    FREE) res=$FREE ;;
-    MSET) res=$MSET ;;
-    MCMP) res=$MCMP ;;
-    EXIT) res=$EXIT ;;
+    LEA|IMM|REF|JMP|JSR|BZ|BNZ|ENT|ADJ|LEV|LI|LC|SI|SC|PSH|OR|XOR|AND|EQ|NE|LT|\
+    GT|LE|GE|SHL|SHR|ADD|SUB|MUL|DIV|MOD|OPEN|READ|CLOS|PRTF|MALC|FREE|MSET|MCMP|EXIT)
+      res=$(($1)) ;;
     *) echo "Unknown instruction $1" ; exit 1 ;;
   esac
 }
@@ -489,29 +445,37 @@ decode_instruction() {
 }
 
 # Read instructions and encode them until EOF.
-read_instructions() {
+# Patch instructions that have an immediate value that represent an address
+# relative to the start of the data segment or code segment so it points to the
+# correct address in memory.
+# $1 is the start of the data segment, $2 is the start of the code segment.
+read_instructions() { # $1: data start, $2: code start
   get_token
   count=0
   while : ; do
     case "$token" in
       EOF) break ;;
       INTEGER)
-        if [ $patch_next_imm = "true" ] ; then
-          value=$(($value + $patch))
-        fi
-        push_data $value ;;
-      IDENTIFIER) encode_instruction $value ; push_data $res ;;
+        value=$(($value + $imm_offset))
+        push_data $value
+        ;;
+      IDENTIFIER)
+        encode_instruction $value
+        push_data $res
+        ;;
       *) echo "Unknown instruction $value" ; exit 1 ;;
     esac
-    # Because instructions with relative addresses are relative to 0, we need to
-    # patch them to be relative to the start of the instructions.
+    # Some instructions are followed by an immediate value that represent an
+    # absolute address. Since the VM loads the instructions into memory at a
+    # different address than the original program, we need to adjust the
+    # immediate value to be relative to the new address.
     case "$value" in
-      "REF") patch_next_imm="true" ; patch=$1 ;;
-      "JMP") patch_next_imm="true" ; patch=$2 ;;
-      "JSR") patch_next_imm="true" ; patch=$2 ;;
-      "BZ")  patch_next_imm="true" ; patch=$2 ;;
-      "BNZ") patch_next_imm="true" ; patch=$2 ;;
-      *)     patch_next_imm="false"; ;;
+      "REF") imm_offset=$1 ;;
+      "JMP") imm_offset=$2 ;;
+      "JSR") imm_offset=$2 ;;
+      "BZ")  imm_offset=$2 ;;
+      "BNZ") imm_offset=$2 ;;
+      *)     imm_offset=0  ;;
     esac
     : $((count += 1))
     get_token
@@ -524,7 +488,7 @@ read_instructions() {
 # Useful for debugging
 print_instructions() {
   echo "Main starts at position $main_addr"
-  instr=$instr_start
+  instr=$1
 
   while [ $instr -lt $last_instr ]; do
     ix=$instr
@@ -579,101 +543,99 @@ run_instructions() {
     fi
 
     case "$i" in
-      "$LEA") a=$((bp + imm)) ;;                # a = (int)(bp + *pc++);
-      "$IMM") a=$imm ;;                         # a = *pc++;
-      "$REF") a=$imm ;;                         # a = *pc++;
-      "$JMP") pc=$imm ;;                        # pc = (int *)*pc;
-      "$JSR") push_stack $pc ; pc=$imm ;;       # { *--sp = (int)(pc + 1); pc = (int *)*pc; }
-      "$BZ") [ $a -eq 0 ] && pc=$imm ;;         # pc = a ? pc + 1 : (int *)*pc;
-      "$BNZ") [ $a -ne 0 ] && pc=$imm ;;       # pc = a ? (int *)*pc : pc + 1;
-      "$ENT")                                   # { *--sp = (int)bp; bp = sp; sp = sp - *pc++; } // enter subroutine
+      "$LEA") a=$((bp + imm)) ;;                  # a = (int)(bp + *pc++);
+      "$IMM") a=$imm ;;                           # a = *pc++;
+      "$REF") a=$imm ;;                           # a = *pc++;
+      "$JMP") pc=$imm ;;                          # pc = (int *)*pc;
+      "$JSR") push_stack $pc ; pc=$imm ;;         # { *--sp = (int)(pc + 1); pc = (int *)*pc; }
+      "$BZ") [ $a -eq 0 ] && pc=$imm ;;           # pc = a ? pc + 1 : (int *)*pc;
+      "$BNZ") [ $a -ne 0 ] && pc=$imm ;;          # pc = a ? (int *)*pc : pc + 1;
+      "$ENT")                                     # { *--sp = (int)bp; bp = sp; sp = sp - *pc++; } // enter subroutine
         push_stack $bp
         bp=$sp
         sp=$((sp - imm))
         ;;
-      "$ADJ") sp=$((sp + imm)) ;;               # sp += *pc++; // stack adjust
-      "$LEV")                                   # { sp = bp; bp = (int *)*sp++; pc = (int *)*sp++; } // leave subroutine
+      "$ADJ") sp=$((sp + imm)) ;;                 # sp += *pc++; // stack adjust
+      "$LEV")                                     # { sp = bp; bp = (int *)*sp++; pc = (int *)*sp++; } // leave subroutine
         sp=$bp
         bp=$((_data_$sp))
         sp=$((sp + 1))
         pc=$((_data_$sp))
         sp=$((sp + 1))
         ;;
-      "$LI") a=$((_data_$a)) ;;                 # a = *(int *)a;
-      "$LC") a=$((_data_$a)) ;;                 # a = *(char *)a;
+      "$LI") a=$((_data_$a)) ;;                   # a = *(int *)a;
+      "$LC") a=$((_data_$a)) ;;                   # a = *(char *)a;
       "$SI") : $((_data_$((_data_$sp))=$a)) ; : $((sp += 1)) ;;  # *(int *)*sp++ = a;
       "$SC") : $((_data_$((_data_$sp))=$a)) ; : $((sp += 1)) ;;  # a = *(char *)*sp++ = a;
-      "$PSH") push_stack "$a" ;;                # *--sp = a;
-      "$OR")  pop_stack; norm32 $((res | a))  ;;  # a = *sp++ |  a;
-      "$XOR") pop_stack; norm32 $((res ^ a))  ;;  # a = *sp++ ^  a;
-      "$AND") pop_stack; norm32 $((res & a))  ;;  # a = *sp++ &  a;
-      "$EQ")  pop_stack; norm32 $((res == a)) ;;  # a = *sp++ == a;
-      "$NE")  pop_stack; norm32 $((res != a)) ;;  # a = *sp++ != a;
-      "$LT")  pop_stack; norm32 $((res < a))  ;;  # a = *sp++ <  a;
-      "$GT")  pop_stack; norm32 $((res > a))  ;;  # a = *sp++ >  a;
-      "$LE")  pop_stack; norm32 $((res <= a)) ;;  # a = *sp++ <= a;
-      "$GE")  pop_stack; norm32 $((res >= a)) ;;  # a = *sp++ >= a;
-      "$SHL") pop_stack; norm32 $((res << a)) ;;  # a = *sp++ << a;
-      "$SHR") pop_stack; norm32 $((res >> a)) ;;  # a = *sp++ >> a;
-      "$ADD") pop_stack; norm32 $((res + a))  ;;  # a = *sp++ +  a;
-      "$SUB") pop_stack; norm32 $((res - a))  ;;  # a = *sp++ -  a;
-      "$MUL") pop_stack; norm32 $((res * a))  ;;  # a = *sp++ *  a;
-      "$DIV") pop_stack; norm32 $((res / a))  ;;  # a = *sp++ /  a;
-      "$MOD") pop_stack; norm32 $((res % a))  ;;  # a = *sp++ %  a;
-      "$OPEN")                                  # a = open((char *)sp[1], *sp);
+      "$PSH") push_stack "$a" ;;                  # *--sp = a;
+      "$OR")  pop_stack res; norm32 $((res | a))  ;;  # a = *sp++ |  a;
+      "$XOR") pop_stack res; norm32 $((res ^ a))  ;;  # a = *sp++ ^  a;
+      "$AND") pop_stack res; norm32 $((res & a))  ;;  # a = *sp++ &  a;
+      "$EQ")  pop_stack res; norm32 $((res == a)) ;;  # a = *sp++ == a;
+      "$NE")  pop_stack res; norm32 $((res != a)) ;;  # a = *sp++ != a;
+      "$LT")  pop_stack res; norm32 $((res < a))  ;;  # a = *sp++ <  a;
+      "$GT")  pop_stack res; norm32 $((res > a))  ;;  # a = *sp++ >  a;
+      "$LE")  pop_stack res; norm32 $((res <= a)) ;;  # a = *sp++ <= a;
+      "$GE")  pop_stack res; norm32 $((res >= a)) ;;  # a = *sp++ >= a;
+      "$SHL") pop_stack res; norm32 $((res << a)) ;;  # a = *sp++ << a;
+      "$SHR") pop_stack res; norm32 $((res >> a)) ;;  # a = *sp++ >> a;
+      "$ADD") pop_stack res; norm32 $((res + a))  ;;  # a = *sp++ +  a;
+      "$SUB") pop_stack res; norm32 $((res - a))  ;;  # a = *sp++ -  a;
+      "$MUL") pop_stack res; norm32 $((res * a))  ;;  # a = *sp++ *  a;
+      "$DIV") pop_stack res; norm32 $((res / a))  ;;  # a = *sp++ /  a;
+      "$MOD") pop_stack res; norm32 $((res % a))  ;;  # a = *sp++ %  a;
+      "$OPEN")                                    # a = open((char *)sp[1], *sp);
         # We represent file descriptors as strings. That means that modes and offsets do not work.
         # These limitations are acceptable since c4.cc does not use them.
         # TODO: Packing and unpacking the string is a lazy way of copying a string
-        at_stack 1
+        at_stack res 1
         pack_string "$res"
-        unpack_string "$res"
-        a=$addr
+        unpack_string a "$res"
         ;;
-      "$READ")                                  # a = read(sp[2], (char *)sp[1], *sp);
-        at_stack 2; fd=$res
-        at_stack 1; buf=$res
-        at_stack 0; count=$res
+      "$READ")                                    # a = read(sp[2], (char *)sp[1], *sp);
+        at_stack fd 2
+        at_stack buf 1
+        at_stack count 0
         pack_string "$fd"
         read_n_char $count $buf < "$res" # We don't want to use cat because it's not pure Shell
         a="$len"
         ;;
-      "$CLOS")                                  # a = close(*sp);
+      "$CLOS")                                    # a = close(*sp);
         # NOP
         ;;
-      "$PRTF")                                  # { t = sp + pc[1]; a = printf((char *)t[-1], t[-2], t[-3], t[-4], t[-5], t[-6]); }
+      "$PRTF")                                    # { t = sp + pc[1]; a = printf((char *)t[-1], t[-2], t[-3], t[-4], t[-5], t[-6]); }
         # Unlike other primitives, PRTF can get a variable number of arguments
         # and the arity is not encoded in the instruction. Fortunately, all PRTF
         # instructions are followed by an ADJ instruction with the number of
         # arguments to printf as parameter. so we can just read the number of
         # arguments from that instruction (which is 2 words ahead).
         : $((count = _data_$((pc + 1))))
-        at_stack $((count - 1)); fmt=$res
+        at_stack fmt $((count - 1))
         c_printf $count "$fmt"
         ;;
-      "$MALC")                                  # a = (int)malloc(*sp);
+      "$MALC")                                    # a = (int)malloc(*sp);
         # Simple bump allocator, no GC
         mem_to_alloc=$((_data_$sp))
-        alloc_memory $mem_to_alloc
-        a=$res
+        alloc_memory a
         ;;
-      "$FREE")                                  # free((void *)*sp);
+      "$FREE")                                    # free((void *)*sp);
         # NOP
         # Maybe zero out the memory to make debugging easier?
         ;;
-      "$MSET")                                  # a = (int)memset((char *)sp[2], sp[1], *sp);
-        at_stack 2; dst=$res
-        at_stack 1; val=$res
-        at_stack 0; len=$res
+      "$MSET")                                    # a = (int)memset((char *)sp[2], sp[1], *sp);
+        at_stack dst 2
+        at_stack val 1
+        at_stack len 0
         ix=0
         while [ $ix -lt $len ]; do
           : $((_data_$((dst + ix)) = val))
           : $((ix += 1))
         done
         ;;
-      "$MCMP")                                  # a = memcmp((char *)sp[2], (char *)sp[1], *sp);
-        at_stack 2; op1=$res
-        at_stack 1; op2=$res
-        at_stack 0; len=$res
+      "$MCMP")                                    # a = memcmp((char *)sp[2], (char *)sp[1], *sp);
+        at_stack op1 2
+        at_stack op2 1
+        at_stack len 0
         ix=0; a=0
         while [ $ix -lt $len ]; do
           if [ $((_data_$((op1 + ix)))) -ne $((_data_$((op2 + ix)))) ] ; then
@@ -684,8 +646,8 @@ run_instructions() {
           : $((ix = ix + 1))
         done
         ;;
-      "$EXIT")                                  # { printf("exit(%d) cycle = %d\n", *sp, cycle); return *sp; }
-        at_stack 0; code=$res
+      "$EXIT")                                    # { printf("exit(%d) cycle = %d\n", *sp, cycle); return *sp; }
+        at_stack code 0
         if [ $no_exit_trace -eq 0 ] ; then
           echo "exit($code) cycle = $cycle"
         fi
@@ -703,15 +665,14 @@ run() {
   if [ $trace_stack -eq 0 ] && [ $strict_mode -eq 1 ] ; then
     set -u # Exit on using unset variable
   fi
-  dat_start=$dat
-  read_data
-  instr_start=$dat
-  get_num
-  main_addr=$(($value + $instr_start))
-  read_instructions $dat_start $instr_start
-  last_instr=$dat
+  read_data # Load data into heap, bump_ptr is set to the end of the data
+  get_num   # Get address of main function
+  code_start=$bump_ptr
+  main_addr=$((value + bump_ptr))
+  read_instructions $INITIAL_HEAP_POS $code_start
+  last_instr=$bump_ptr
   if [ $debug -eq 1 ] ; then
-    print_instructions
+    print_instructions $code_start
   fi
 
   # sp=0;
@@ -723,10 +684,10 @@ run() {
   push_stack $PSH
   t=$sp
   argc=$#; push_stack $argc # argc
-  alloc_memory $argc ; argv_ptr=$res ; push_stack $res # argv
+  alloc_memory argv_ptr $argc; push_stack $argv_ptr # argv
 
   while [ $# -ge 1 ]; do
-    unpack_string "$1"
+    unpack_string addr "$1"
     : $((_data_$argv_ptr = $addr))
     : $((argv_ptr += 1))
     shift
@@ -753,7 +714,7 @@ show_stack() {
 show_heap() {
   heap_ix=$INITIAL_HEAP_POS
   echo "    Heap:"
-  while [ $heap_ix -lt $dat ]; do
+  while [ $heap_ix -lt $bump_ptr ]; do
     ascii=$((_data_$heap_ix))
     char=""
     if [ $ascii -ge 31 ] && [ $ascii -le 127 ] ; then
