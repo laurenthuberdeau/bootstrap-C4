@@ -6,7 +6,5 @@ int fib(int n) {
 }
 
 int main(int argc, char **argv) {
-  int n;
-  n = fib(15);
-  exit(n);
+  printf("%d\n", n);
 }
