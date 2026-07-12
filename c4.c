@@ -13,8 +13,9 @@
 #include <fcntl.h>
 #define int long long
 
-char *p, *lp, // current position in source code
-     *data;   // data/bss pointer
+char *p, *lp,    // current position in source code
+     *data,      // data/bss pointer
+     *datastart; // start of data/bss region
 
 int *e, *le,  // current position in emitted code
     *id,      // currently parsed identifier
@@ -140,9 +141,9 @@ void expr(int lev)
   if (!tk) { printf("%d: unexpected eof in expression\n", line); exit(-1); }
   else if (tk == Num) { *++e = IMM; *++e = ival; next(); ty = INT; }
   else if (tk == '"') {
-    *++e = REF; *++e = ival; next();
+    *++e = REF; *++e = ival - (int)datastart; next();
     while (tk == '"') next();
-    data = (char *)((int)data + sizeof(int) & -sizeof(int)); ty = PTR; // Not sure if this needs to check portable here
+    data = (char *)((int)data + sizeof(int) & -sizeof(int)); ty = PTR;
   }
   else if (tk == Sizeof) {
     next(); if (tk == '(') next(); else { printf("%d: open paren expected in sizeof\n", line); exit(-1); }
@@ -168,7 +169,7 @@ void expr(int lev)
     else if (d[Class] == Num) { *++e = IMM; *++e = d[Val]; ty = INT; }
     else {
       if (d[Class] == Loc) { *++e = LEA; *++e = loc - d[Val]; }
-      else if (d[Class] == Glo) { *++e = REF; *++e = d[Val]; } // TODO
+      else if (d[Class] == Glo) { *++e = REF; *++e = d[Val] - (int)datastart; }
       else { printf("%d: undefined variable\n", line); exit(-1); }
       *++e = ((ty = d[Type]) == CHAR) ? LC : LI;
     }
@@ -336,10 +337,9 @@ int main(signed argc, char **argv)
 {
   int fd, bt, ty, poolsz, *idmain;
   int *pc, *sp, *bp, a, cycle; // vm registers
-  int i, *t, *stack_ix; // temps
+  int i, *t; // temps
 
   int *estart;  // start of emitted code
-  char *datastart, *datastart2; // start of data/bss
 
   --argc; ++argv;
   if (argc > 0 && **argv == '-' && (*argv)[1] == 's') { src = 1; --argc; ++argv; }
@@ -489,7 +489,6 @@ int main(signed argc, char **argv)
     // <data size>
     printf("%d\n", data - datastart);
     // <data>
-    datastart2 = datastart; // Saving this to compute reference offset
     while (datastart < data) {
       // Escape non-printable characters and '\'
       if (*datastart <= 31 || *datastart >= 127 || *datastart == '\\') {
@@ -499,7 +498,6 @@ int main(signed argc, char **argv)
       }
       datastart++;
     }
-    datastart = datastart2;
     printf("\n");
 
     // <main address>
@@ -509,18 +507,15 @@ int main(signed argc, char **argv)
     while (le <= e) {
       i = *le;
       // Relocate addresses
+      printf("%4.4s", &"LEA ,IMM ,REF ,JMP ,JSR ,BZ  ,BNZ ,ENT ,ADJ ,LEV ,LI  ,LC  ,SI  ,SC  ,PSH ,"
+                            "OR  ,XOR ,AND ,EQ  ,NE  ,LT  ,GT  ,LE  ,GE  ,SHL ,SHR ,ADD ,SUB ,MUL ,DIV ,MOD ,"
+                            "OPEN,READ,CLOS,PRTF,MALC,FREE,MSET,MCMP,EXIT,"[i * 5]);
       if (i == JMP || i == JSR || i == BZ || i == BNZ) {
-        printf("%4.4s", &"LEA ,IMM ,REF ,JMP ,JSR ,BZ  ,BNZ ,ENT ,ADJ ,LEV ,LI  ,LC  ,SI  ,SC  ,PSH ,"
-                              "OR  ,XOR ,AND ,EQ  ,NE  ,LT  ,GT  ,LE  ,GE  ,SHL ,SHR ,ADD ,SUB ,MUL ,DIV ,MOD ,"
-                              "OPEN,READ,CLOS,PRTF,MALC,FREE,MSET,MCMP,EXIT,"[i * 5]);
-        if (*le <= ADJ) printf(" %d\n", ((*++le) - (int) estart) / sizeof(int)); else printf("\n");
-      } else if (i == REF) {
-        printf("REF  %d\n", (*++le - (int) datastart));
+        printf(" %d\n", ((*++le) - (int) estart) / sizeof(int));
+      } else if (*le <= ADJ) {
+         printf(" %d\n", *++le);
       } else {
-        printf("%4.4s", &"LEA ,IMM ,REF ,JMP ,JSR ,BZ  ,BNZ ,ENT ,ADJ ,LEV ,LI  ,LC  ,SI  ,SC  ,PSH ,"
-                              "OR  ,XOR ,AND ,EQ  ,NE  ,LT  ,GT  ,LE  ,GE  ,SHL ,SHR ,ADD ,SUB ,MUL ,DIV ,MOD ,"
-                              "OPEN,READ,CLOS,PRTF,MALC,FREE,MSET,MCMP,EXIT,"[i * 5]);
-        if (*le <= ADJ) printf(" %d\n", *++le); else printf("\n");
+        printf("\n");
       }
       le++;
     }
@@ -540,7 +535,7 @@ int main(signed argc, char **argv)
     }
     if      (i == LEA) a = (int)(bp + *pc++);                             // load local address
     else if (i == IMM) a = *pc++;                                         // load global address or immediate
-    else if (i == REF) a = *pc++;                                         // load global address
+    else if (i == REF) a = *pc++ + (int) datastart;                       // load global address
     else if (i == JMP) pc = (int *)*pc;                                   // jump
     else if (i == JSR) { *--sp = (int)(pc + 1); pc = (int *)*pc; }        // jump to subroutine
     else if (i == BZ)  pc = a ? pc + 1 : (int *)*pc;                      // branch if zero
