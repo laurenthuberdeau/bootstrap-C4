@@ -25,12 +25,14 @@ int *e, *le,  // current position in emitted code
     loc,      // local variable offset
     line,     // current line number
     src,      // print source and assembly flag
-    debug;    // print executed instructions
+    debug,    // print executed instructions
+    brkl,      // head of the current loop's break backpatch list (0 if empty)
+    cont;     // current loop's continue target address (0 if not in a loop)
 
 // tokens and classes (operators last and in precedence order)
 enum {
   Num = 128, Fun, Sys, Glo, Loc, Id,
-  Char, Else, Enum, If, Int, Return, Sizeof, While,
+  Char, Else, Enum, If, Int, Return, Sizeof, While, Break, Continue,
   Assign, Cond, Lor, Lan, Or, Xor, And, Eq, Ne, Lt, Gt, Le, Ge, Shl, Shr, Add, Sub, Mul, Div, Mod, Inc, Dec, Brak,
   Frwd // class of a function that is called before it is defined (Val holds a backpatch list)
 };
@@ -293,7 +295,8 @@ void expr(int lev)
 
 void stmt()
 {
-  int *a, *b;
+  int *a, *b, *c;
+  int sb, sc; // saved break list / continue target of the enclosing loop
 
   if (tk == If) {
     next();
@@ -311,14 +314,31 @@ void stmt()
   }
   else if (tk == While) {
     next();
+    sb = brkl; sc = cont; // save the enclosing loop's break/continue context
+    brkl = 0;
     a = e + 1;
+    cont = (int)a;       // continue jumps back to re-test the condition
     if (tk == '(') next(); else { printf("%d: open paren expected\n", line); exit(-1); }
     expr(Assign);
     if (tk == ')') next(); else { printf("%d: close paren expected\n", line); exit(-1); }
     *++e = BZ; b = ++e;
     stmt();
     *++e = JMP; *++e = (int)a;
-    *b = (int)(e + 1);
+    *b = (int)(e + 1);   // exit target
+    while (brkl) { c = (int *)brkl; brkl = *c; *c = (int)(e + 1); } // backpatch breaks to exit
+    brkl = sb; cont = sc; // restore the enclosing loop's context
+  }
+  else if (tk == Break) {
+    next();
+    if (!cont) { printf("%d: break not in a loop\n", line); exit(-1); }
+    *++e = JMP; *++e = brkl; brkl = (int)e; // thread this jump onto the break list
+    if (tk == ';') next(); else { printf("%d: semicolon expected\n", line); exit(-1); }
+  }
+  else if (tk == Continue) {
+    next();
+    if (!cont) { printf("%d: continue not in a loop\n", line); exit(-1); }
+    *++e = JMP; *++e = cont;
+    if (tk == ';') next(); else { printf("%d: semicolon expected\n", line); exit(-1); }
   }
   else if (tk == Return) {
     next();
@@ -363,9 +383,9 @@ int main(int argc, char **argv)
   memset(e,    0, poolsz);
   memset(data, 0, poolsz);
 
-  p = "char else enum if int return sizeof while "
+  p = "char else enum if int return sizeof while break continue "
       "open read close printf malloc free memset memcmp exit void main";
-  i = Char; while (i <= While) { next(); id[Tk] = i++; } // add keywords to symbol table
+  i = Char; while (i <= Continue) { next(); id[Tk] = i++; } // add keywords to symbol table
   i = OPEN; while (i <= EXIT) { next(); id[Class] = Sys; id[Type] = INT; id[Val] = i++; } // add library to symbol table
   next(); id[Tk] = Char; // handle void type
   next(); idmain = id; // keep track of main
