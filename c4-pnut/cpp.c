@@ -18,8 +18,9 @@
 #include <fcntl.h> // for open
 #include <unistd.h> // for close
 
-// Preprocessor lines are ignored by c4
-// We use this to include c4-specific code.
+// Preprocessor lines, including #include, are ignored by c4.
+// This can be used to have c4-only code (using #if 0 <code> #endif), and code
+// visible to other compilers except c4 (using #define and #include).
 #define int long long
 #undef EOS
 
