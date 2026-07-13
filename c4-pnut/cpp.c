@@ -4,18 +4,23 @@
 #include <fcntl.h> // for open
 #include <unistd.h> // for close
 
-#define int long long // Ignored by c4
+// Preprocessor lines are ignored by c4
+// We use this to include c4-specific code.
+#define int long long
 #undef EOS
-#undef NULL
 
 // Random C constants
 enum {
-  NULL = 0,
   // false = 0,
   // true = 1,
   EOS = 256,
 };
 
+// These reimplement libc functions for c4, which has no libc. When compiling
+// with a real C compiler, the #ifndef excludes them so the real libc versions
+// are used. c4 ignores # directive lines but still compiles the bodies between
+// them, so it always sees these definitions regardless of the guard.
+#ifndef __STDC__
 void memcpy(char *dest, char *src, int n) {
   int i;
   i = 0;
@@ -36,7 +41,7 @@ int strlen(char *str) {
 
 char *strrchr(char *str, int c) {
   char *last;
-  last = NULL;
+  last = 0;
   while (*str != '\0') {
     if (*str == c) {
       last = str;
@@ -45,6 +50,7 @@ char *strrchr(char *str, int c) {
   }
   return last;
 }
+#endif
 
 // State for the reader
 //  - fd: current file pointer
@@ -79,9 +85,11 @@ enum {
 
 int *include_stack, *include_stack_start, *include_stack_end;
 
+#ifndef __STDC__
 int putchar(char c) {
   printf("%c", c);
 }
+#endif
 
 void putstr(char *str) {
   while (*str) {
