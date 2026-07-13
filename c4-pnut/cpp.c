@@ -1761,9 +1761,24 @@ int main(int argc, char **argv) {
   i = 1;
   while (i < argc) {
     if (argv[i][0] == '-') {
-      if (argv[i][1] == 'D') {
-        // pnut-sh only needs -D<macro> and no other options
-        init_builtin_int_macro(argv[i] + 2, 1); // +2 to skip -D
+      if (argv[i][1] == 'D') { // -D<macro> or -D <macro>
+        if (argv[i][2] == 0) { // rest of option is in argv[i + 1]
+            if (argv[i + 1] == 0) fatal_error("missing macro name for -D option");
+            i = i + 1;
+            init_builtin_int_macro(argv[i], 1);
+          } else {
+            init_builtin_int_macro(argv[i] + 2, 1); // skip '-D'
+          }
+      } else if (argv[i][1] == 'I') { // -I<path> or -I <path>
+        if (include_search_path != 0) fatal_error("only one include path allowed");
+
+        if (argv[i][2] == 0) { // rest of option is in argv[i + 1]
+          if (argv[i + 1] == 0) fatal_error("missing path for -I option");
+          i = i + 1;
+          include_search_path = argv[i];
+        } else {
+          include_search_path = argv[i] + 2; // skip '-I'
+        }
       } else {
         putstr("Option "); putstr(argv[i]); putchar('\n');
         fatal_error("unknown option");
