@@ -1524,176 +1524,83 @@ int parse_unary_expression() {
   }
 }
 
-int parse_multiplicative_expression() {
-  int result;
-  int op;
-  result = parse_unary_expression();
+// Binary operator precedence. Higher binds tighter; 0 means "not a binary
+// operator". The whole precedence ladder from '*' down to '||' is collapsed
+// into this table plus the precedence-climbing loop in parse_binary_expression.
+int binop_prec(int op) {
+  if (op == BAR_BAR)                                     return 1;
+  if (op == AMP_AMP)                                     return 2;
+  if (op == '|')                                         return 3;
+  if (op == '^')                                         return 4;
+  if (op == '&')                                         return 5;
+  if (op == EQ_EQ || op == EXCL_EQ)                      return 6;
+  if (op == '<' || op == '>' || op == LT_EQ || op == GT_EQ) return 7;
+  if (op == LSHIFT || op == RSHIFT)                      return 8;
+  if (op == '+' || op == '-')                            return 9;
+  if (op == '*' || op == '/' || op == '%')              return 10;
+  return 0;
+}
 
-  while (tok == '*' || tok == '/' || tok == '%') {
+int apply_binop(int op, int a, int b) {
+  // Note: && and || evaluate both sides (non-short-circuiting) because we parse
+  // as we evaluate and can't lazily parse the right-hand side. This matches C's
+  // result for these operands, which are already reduced to 0/1 constants.
+  if (op == BAR_BAR)  return a | b;
+  if (op == AMP_AMP)  return a & b;
+  if (op == '|')      return a | b;
+  if (op == '^')      return a ^ b;
+  if (op == '&')      return a & b;
+  if (op == EQ_EQ)    return a == b;
+  if (op == EXCL_EQ)  return a != b;
+  if (op == '<')      return a < b;
+  if (op == '>')      return a > b;
+  if (op == LT_EQ)    return a <= b;
+  if (op == GT_EQ)    return a >= b;
+  if (op == LSHIFT)   return a << b;
+  if (op == RSHIFT)   return a >> b;
+  if (op == '+')      return a + b;
+  if (op == '-')      return a - b;
+  if (op == '*')      return a * b;
+  if (op == '/')      return a / b;
+  return a % b; // op == '%'
+}
+
+// Precedence-climbing parser for all left-associative binary operators.
+// min_prec is the lowest precedence this call is allowed to consume.
+int parse_binary_expression(int min_prec) {
+  int left;
+  int op;
+  int prec;
+  left = parse_unary_expression();
+
+  while ((prec = binop_prec(tok)) >= min_prec) {
     op = tok;
     get_tok();
-
-    if (op == '*')       result = result * parse_unary_expression();
-    else if (op == '/')  result = result / parse_unary_expression();
-    else                 result = result % parse_unary_expression();
-
+    left = apply_binop(op, left, parse_binary_expression(prec + 1));
   }
 
-  return result;
+  return left;
 }
 
-int parse_additive_expression() {
+// Entry point of the expression parser. It parses a conditional expression, which is the top-level
+int parse_expression() {
   int result;
-  int op;
-  result = parse_multiplicative_expression();
-
-  while (tok == '+' || tok == '-') {
-    op = tok;
-    get_tok();
-
-    if (op == '+') result = result + parse_multiplicative_expression();
-    else           result = result - parse_multiplicative_expression();
-  }
-
-  return result;
-}
-
-int parse_shift_expression() {
-  int result;
-  int op;
-  result = parse_additive_expression();
-
-  while (tok == LSHIFT || tok == RSHIFT) {
-    op = tok;
-    get_tok();
-    if (op == LSHIFT) result = result << parse_additive_expression();
-    else              result = result >> parse_additive_expression();
-  }
-
-  return result;
-}
-
-int parse_relational_expression() {
-  int result;
-  int op;
-  result = parse_shift_expression();
-
-  while (tok == '<' || tok == '>' || tok == LT_EQ || tok == GT_EQ) {
-    op = tok;
-    get_tok();
-
-    if (op == '<')        result = result < parse_shift_expression();
-    else if (op == '>')   result = result > parse_shift_expression();
-    else if (op == LT_EQ) result = result <= parse_shift_expression();
-    else                  result = result >= parse_shift_expression();
-  }
-
-  return result;
-}
-
-int parse_equality_expression() {
-  int result;
-  int op;
-  result = parse_relational_expression();
-
-  while (tok == EQ_EQ || tok == EXCL_EQ) {
-    op = tok;
-    get_tok();
-    if (op == EQ_EQ) result = result == parse_relational_expression();
-    else             result = result != parse_relational_expression();
-  }
-
-  return result;
-}
-
-int parse_AND_expression() {
-  int result;
-  result = parse_equality_expression();
-
-  while (tok == '&') {
-    get_tok();
-    result = result & parse_equality_expression();
-  }
-
-  return result;
-}
-
-int parse_exclusive_OR_expression() {
-  int result;
-  result = parse_AND_expression();
-
-  while (tok == '^') {
-    get_tok();
-    result = result ^ parse_AND_expression();
-  }
-
-  return result;
-}
-
-int parse_inclusive_OR_expression() {
-  int result;
-  result = parse_exclusive_OR_expression();
-
-  while (tok == '|') {
-    get_tok();
-    result = result | parse_exclusive_OR_expression();
-  }
-
-  return result;
-}
-
-int parse_logical_AND_expression() {
-  int result;
-  result = parse_inclusive_OR_expression();
-
-  while (tok == AMP_AMP) {
-    get_tok();
-    // Use non-short-circuiting behavior for the preprocessor expression
-    // evaluation because we're parsing as we evaluate and can't lazily parse
-    // the right-hand side.
-    result = result & parse_inclusive_OR_expression();
-  }
-
-  return result;
-}
-
-int parse_logical_OR_expression() {
-  int result;
-  result = parse_logical_AND_expression();
-
-  while (tok == BAR_BAR) {
-    get_tok();
-    // Use non-short-circuiting behavior for the preprocessor expression
-    // evaluation because we're parsing as we evaluate and can't lazily parse
-    // the right-hand side.
-    result = result | parse_logical_AND_expression();
-  }
-
-  return result;
-}
-
-int parse_conditional_expression() {
-  int result;
-  result = parse_logical_OR_expression();
+  result = parse_binary_expression(1);
 
   if (tok == '?') {
     get_tok();
     if (parse_expression() == 0) {
-      parse_conditional_expression();          // Skip the true branch
+      parse_expression();          // Skip the true branch
       expect_tok(':');
-      result = parse_conditional_expression(); // Evaluate the false branch
+      result = parse_expression(); // Evaluate the false branch
     } else {
-      result = parse_conditional_expression(); // Evaluate the true branch
+      result = parse_expression(); // Evaluate the true branch
       expect_tok(':');
-      parse_conditional_expression();          // Skip the false branch
+      parse_expression();          // Skip the false branch
     }
   }
 
   return result;
-}
-
-int parse_expression() {
-  return parse_conditional_expression();
 }
 
 void print_string_char(int c) {
