@@ -28,3 +28,8 @@ beginning of the global variables.
 
 `asm/c4.s` is an implementation of the original `c4.c` in assembly, for use
 in reproducible builds rooted in [`stage0`](https://github.com/oriansj/stage0).
+
+## [c4 for pnut-exe](c4-pnut/README.md)
+
+`c4-pnut/c4.c` is a modified version of the original `c4.c` with minimal
+extensions so it can host [`pnut-exe`](https://github.com/udem-dlteam/pnut).
