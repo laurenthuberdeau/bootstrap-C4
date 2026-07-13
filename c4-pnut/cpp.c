@@ -1782,12 +1782,11 @@ void print_tok(int tok, int val) {
   else if (tok == EXCL_EQ)      putstr("!=");
   else if (tok == PERCENT_EQ)   putstr("%=");
   else if (tok == PLUS_EQ)      putstr("+=");
+  else if (tok == PLUS_PLUS)    putstr("++");
   else if (tok == RSHIFT_EQ)    putstr(">>=");
   else if (tok == RSHIFT)       putstr(">>");
   else if (tok == SLASH_EQ)     putstr("/=");
   else if (tok == STAR_EQ)      putstr("*=");
-  else if (tok == PLUS_PLUS)    putstr("++");
-  else if (tok == MINUS_MINUS)  putstr("--");
   else if (tok == ELLIPSIS)     putstr("...");
   else if (tok == INTEGER)      putint(-val);
   else if (tok == CHARACTER) {
