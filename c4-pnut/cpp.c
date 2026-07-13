@@ -637,8 +637,10 @@ int LINE__ID;
 
 void get_tok();
 
-// When we parse a macro, we generally want the tokens as they are, without expanding them.
-void get_tok_macro() {
+// When we parse a macro, we generally want the tokens as they are, without
+// expanding them. When force_newlines is set, newline tokens are produced. This
+// is used to end preprocessor directives.
+void get_tok_macro(int force_newlines) {
   int prev_expand_macro;
   int prev_macro_mask;
   int skip_newlines_prev;
@@ -648,26 +650,11 @@ void get_tok_macro() {
 
   expand_macro = 0;
   if_macro_mask = 1;
-  skip_newlines = 0;
+  if (force_newlines) skip_newlines = 0;
   get_tok();
   expand_macro = prev_expand_macro;
   if_macro_mask = prev_macro_mask;
   skip_newlines = skip_newlines_prev;
-}
-
-// Like get_tok_macro, but skips newline
-// This is useful when we want to read the arguments of a macro expansion.
-void get_tok_macro_expand() {
-  int prev_expand_macro;
-  int prev_macro_mask;
-  prev_expand_macro = expand_macro;
-  prev_macro_mask = if_macro_mask;
-
-  expand_macro = 0;
-  if_macro_mask = 1;
-  get_tok();
-  expand_macro = prev_expand_macro;
-  if_macro_mask = prev_macro_mask;
 }
 
 int lookup_macro_token(int args, int tok, int val) {
@@ -698,11 +685,11 @@ int read_macro_tokens(int args) {
     // Append the token/value pair to the replay list
     toks = cons(lookup_macro_token(args, tok, val), 0);
     rest = toks;
-    get_tok_macro();
+    get_tok_macro(1);
     while (tok != '\n' && tok != EOS) {
       set_cdr(rest, cons(lookup_macro_token(args, tok, val), 0));
       rest = cdr(rest); // Advance tail
-      get_tok_macro();
+      get_tok_macro(1);
     }
   }
 
@@ -729,25 +716,25 @@ void handle_define() {
   macro = val;
   if (ch == '(') { // Function-like macro
     args_count = 0;
-    get_tok_macro(); // Skip macro name
-    get_tok_macro(); // Skip '('
+    get_tok_macro(1); // Skip macro name
+    get_tok_macro(1); // Skip '('
     while (tok != '\n' && tok != EOS) {
       if (tok == ',') {
         // Allow sequence of commas, this is more lenient than the standard
-        get_tok_macro();
+        get_tok_macro(1);
         continue;
       } else if (tok == ')') {
-        get_tok_macro();
+        get_tok_macro(1);
         break;
       }
-      get_tok_macro();
+      get_tok_macro(1);
       // Accumulate parameters in reverse order. That's ok because the arguments
       // to the macro will also be in reverse order.
       args = cons(val, args);
       args_count = args_count + 1;
     }
   } else {
-    get_tok_macro(); // Skip macro name
+    get_tok_macro(1); // Skip macro name
   }
 
   // Accumulate tokens so they can be replayed when the macro is used
@@ -781,7 +768,7 @@ void handle_include() {
   if (tok == STRING) {
     buf = symbol_buf(val);
     include_file(buf, fd_dirname);
-    get_tok_macro(); // Skip the string
+    get_tok_macro(1); // Skip the string
   } else if (tok == '<') {
     accum_string_until('>');
     val = end_symbol();
@@ -791,7 +778,7 @@ void handle_include() {
       buf = symbol_buf(val);
       include_file(buf, include_search_path);
     }
-    get_tok_macro(); // Skip the string
+    get_tok_macro(1); // Skip the string
   } else {
     dump_tok(tok);
     syntax_error("expected string to #include directive");
@@ -802,18 +789,18 @@ void handle_include() {
 void handle_preprocessor_directive() {
   int temp;
   while (1) {
-    get_tok_macro(); // Get the # token
-    get_tok_macro(); // Get the directive
+    get_tok_macro(1); // Get the # token
+    get_tok_macro(1); // Get the directive
 
     if (tok == IFDEF_KW || tok == IFNDEF_KW) {
       temp = tok;
-      get_tok_macro(); // Get the macro name
+      get_tok_macro(1); // Get the macro name
       if (temp == IFDEF_KW) {
         push_if_macro_mask(tok == MACRO);
       } else {
         push_if_macro_mask(tok != MACRO);
       }
-      get_tok_macro(); // Skip the macro name
+      get_tok_macro(1); // Skip the macro name
     } else if (tok == IF_KW) {
       temp = evaluate_if_condition();
       push_if_macro_mask(temp != 0);
@@ -832,26 +819,26 @@ void handle_preprocessor_directive() {
       } else {
         if_macro_mask = 0;
       }
-      get_tok_macro(); // Skip the else keyword
+      get_tok_macro(1); // Skip the else keyword
     } else if (tok == ENDIF_KW) {
       pop_if_macro_mask();
-      get_tok_macro(); // Skip the else keyword
+      get_tok_macro(1); // Skip the else keyword
     } else if (if_macro_mask) {
       if (tok == INCLUDE_KW) {
-        get_tok_macro(); // Get the STRING token
+        get_tok_macro(1); // Get the STRING token
         handle_include();
       }
       else if (tok == UNDEF_KW) {
-        get_tok_macro(); // Get the macro name
+        get_tok_macro(1); // Get the macro name
         if (tok == IDENTIFIER || tok == MACRO) {
           set_symbol_type(val, IDENTIFIER); // Unmark the macro
-          get_tok_macro(); // Skip the macro name
+          get_tok_macro(1); // Skip the macro name
         } else {
           dump_tok(tok);
           syntax_error("#undef directive can only be followed by a identifier");
         }
       } else if (tok == DEFINE_KW) {
-        get_tok_macro(); // Get the macro name
+        get_tok_macro(1); // Get the macro name
         handle_define();
       }
       else if (tok == WARNING_KW || tok == ERROR_KW) {
@@ -876,7 +863,7 @@ void handle_preprocessor_directive() {
       }
     } else {
       // Skip the rest of the directive
-      while (tok != '\n' && tok != EOS) get_tok_macro();
+      while (tok != '\n' && tok != EOS) get_tok_macro(1);
     }
 
     if (tok != '\n' && tok != EOS) {
@@ -1002,7 +989,7 @@ int macro_parse_argument() {
       set_cdr(rest, cons(cons(tok, val), 0));
       rest = cdr(rest);
     }
-    get_tok_macro_expand();
+    get_tok_macro(0);
   }
 
   return arg_tokens;
@@ -1029,11 +1016,11 @@ int get_macro_args_toks(int macro) {
   args = 0;
   macro_args_count = 0;
   prev_is_comma = tok == ',';
-  get_tok_macro_expand(); // Skip '('
+  get_tok_macro(0); // Skip '('
 
   while (tok != ')' && tok != EOS) {
     if (tok == ',') {
-      get_tok_macro_expand(); // Skip comma
+      get_tok_macro(0); // Skip comma
       if (prev_is_comma) { // Push empty arg
         args = cons(0, args);
         macro_args_count = macro_args_count + 1;
