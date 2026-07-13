@@ -36,3 +36,7 @@ in reproducible builds rooted in [`stage0`](https://github.com/oriansj/stage0).
 preprocessor is also included in `c4-pnut/cpp.c`, intended to make pnut's source
 code compatible with it. Work is ongoing to port `pnut-exe` to c4.
 
+## Other ideas
+
+- JIT for c4, using the bytecode output from `vm/c4.c`.
+- A c4-compatible shell, to bootstrap an interactive experience from c4.
