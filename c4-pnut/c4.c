@@ -31,7 +31,8 @@ int *e, *le,  // current position in emitted code
 enum {
   Num = 128, Fun, Sys, Glo, Loc, Id,
   Char, Else, Enum, If, Int, Return, Sizeof, While,
-  Assign, Cond, Lor, Lan, Or, Xor, And, Eq, Ne, Lt, Gt, Le, Ge, Shl, Shr, Add, Sub, Mul, Div, Mod, Inc, Dec, Brak
+  Assign, Cond, Lor, Lan, Or, Xor, And, Eq, Ne, Lt, Gt, Le, Ge, Shl, Shr, Add, Sub, Mul, Div, Mod, Inc, Dec, Brak,
+  Frwd // class of a function that is called before it is defined (Val holds a backpatch list)
 };
 
 // opcodes
@@ -159,6 +160,15 @@ void expr(int lev)
       next();
       if (d[Class] == Sys) *++e = d[Val];
       else if (d[Class] == Fun) { *++e = JSR; *++e = d[Val]; }
+      else if (d[Class] == Frwd) {
+        // Call to a forward declared function.
+        // Emit the JSR with a placeholder operand and thread this call site
+        // onto d[Val], a linked list of patch locations resolved when the
+        // function is defined.
+        *++e = JSR; *++e = d[Val]; // emit JSR + previous patch location
+        d[Val] = (int)e;           // function_symbol[val] = new patch location
+      }
+
       else { printf("%d: bad function call\n", line); exit(-1); }
       if (t) { *++e = ADJ; *++e = t; }
       ty = d[Type];
@@ -334,7 +344,7 @@ int main(int argc, char **argv)
 {
   int fd, bt, ty, poolsz, *idmain;
   int *pc, *sp, *bp, a, cycle; // vm registers
-  int i, *t; // temps
+  int i, *t, *b; // temps
 
   --argc; ++argv;
   if (argc > 0 && **argv == '-' && (*argv)[1] == 's') { src = 1; --argc; ++argv; }
@@ -397,14 +407,15 @@ int main(int argc, char **argv)
       ty = bt;
       while (tk == Mul) { next(); ty = ty + PTR; }
       if (tk != Id) { printf("%d: bad global declaration\n", line); return -1; }
-      if (id[Class]) { printf("%d: duplicate global definition\n", line); return -1; }
+      if (id[Class] && id[Class] != Frwd) { printf("%d: duplicate global definition\n", line); return -1; }
       next();
       id[Type] = ty;
       if (tk == '(') { // function
-        id[Class] = Fun;
-        id[Val] = (int)(e + 1);
+        // Mark function as a forward declaration if it is not already defined.
+        if (!id[Class]) { id[Class] = Frwd; id[Val] = 0; }
+        b = id; // function symbol
         next(); i = 0;
-        while (tk != ')') {
+        while (tk != ')') { // function parameters
           ty = INT;
           if (tk == Int) next();
           else if (tk == Char) { next(); ty = CHAR; }
@@ -418,29 +429,36 @@ int main(int argc, char **argv)
           if (tk == ',') next();
         }
         next();
-        if (tk != '{') { printf("%d: bad function definition\n", line); return -1; }
-        loc = ++i;
-        next();
-        while (tk == Int || tk == Char) {
-          bt = (tk == Int) ? INT : CHAR;
+        if (tk != ';') { // function definition
+          id = b; // restore function symbol
+          id[Class] = Fun; // mark as defined
+          b = (int *)id[Val]; // list of forward-call sites to patch (0 if none); read before overwriting
+          id[Val] = (int)(e + 1); // function entry point
+          while (b) { t = (int *)*b; *b = id[Val]; b = t; } // resolve forward calls to the entry point
+          if (tk != '{') { printf("%d: bad function definition\n", line); return -1; }
+          loc = ++i;
           next();
-          while (tk != ';') {
-            ty = bt;
-            while (tk == Mul) { next(); ty = ty + PTR; }
-            if (tk != Id) { printf("%d: bad local declaration\n", line); return -1; }
-            if (id[Class] == Loc) { printf("%d: duplicate local definition\n", line); return -1; }
-            id[HClass] = id[Class]; id[Class] = Loc;
-            id[HType]  = id[Type];  id[Type] = ty;
-            id[HVal]   = id[Val];   id[Val] = ++i;
+          while (tk == Int || tk == Char) {
+            bt = (tk == Int) ? INT : CHAR;
             next();
-            if (tk == ',') next();
+            while (tk != ';') {
+              ty = bt;
+              while (tk == Mul) { next(); ty = ty + PTR; }
+              if (tk != Id) { printf("%d: bad local declaration\n", line); return -1; }
+              if (id[Class] == Loc) { printf("%d: duplicate local definition\n", line); return -1; }
+              id[HClass] = id[Class]; id[Class] = Loc;
+              id[HType]  = id[Type];  id[Type] = ty;
+              id[HVal]   = id[Val];   id[Val] = ++i;
+              next();
+              if (tk == ',') next();
+            }
+            next();
           }
-          next();
+          *++e = ENT; *++e = i - loc;
+          while (tk != '}') stmt();
+          *++e = LEV;
         }
-        *++e = ENT; *++e = i - loc;
-        while (tk != '}') stmt();
-        *++e = LEV;
-        id = sym; // unwind symbol table locals
+        id = sym; // unwind symbol table locals (parameters, plus any body locals)
         while (id[Tk]) {
           if (id[Class] == Loc) {
             id[Class] = id[HClass];
@@ -458,6 +476,13 @@ int main(int argc, char **argv)
       if (tk == ',') next();
     }
     next();
+  }
+
+  // report any function that was called but never defined
+  id = sym;
+  while (id[Tk]) {
+    if (id[Class] == Frwd) { printf("undefined function\n"); return -1; }
+    id = id + Idsz;
   }
 
   if (!(pc = (int *)idmain[Val])) { printf("main() not defined\n"); return -1; }
