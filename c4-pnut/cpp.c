@@ -1,3 +1,17 @@
+// cpp.c - a C preprocessor compatible with c4
+//
+// - Object macros
+// - Function-like macros
+// - Conditional groups: #if, #ifdef, #ifndef, #else, #elif and #endif
+// - Diagnostic macros: #warning and #error
+// - Predefined macros: __FILE__ and __LINE__
+// - System and user includes
+//
+//  cc cpp.c -o cpp
+//  ./cpp file.c -D <macro> -I <include_path>
+//
+// Written by Laurent Huberdeau
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
