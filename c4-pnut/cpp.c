@@ -197,10 +197,6 @@ enum TOKEN {
   SLASH_EQ,
   STAR_EQ,
   HASH_HASH,
-  PLUS_PLUS_PRE,
-  MINUS_MINUS_PRE,
-  PLUS_PLUS_POST,
-  MINUS_MINUS_POST,
   ELLIPSIS,
   MACRO_ARG = 499,
   IDENTIFIER = 500, // 500 because it's easy to remember
@@ -241,24 +237,6 @@ int alloc_obj(int size) {
   return (heap_alloc - size);
 }
 
-int get_op(int node) {
-  return heap[node] & 1023;
-}
-
-int get_nb_children(int node) {
-  return heap[node] >> 10;
-}
-
-// Because everything is an int in pnut, it's easy to make mistakes and pass the
-// wrong node type to a function. These versions of get_child take the input
-// and/or output node type and checks that the node has the expected type before
-// returning the child node.
-// It also checks that the index is within bounds.
-
-int get_val(int node) {
-  return heap[node+1];
-}
-
 int get_child(int node, int i) {
   return heap[node+i+1];
 }
@@ -295,10 +273,6 @@ char *symbol_buf(int symbol) {
 
 int symbol_len(int symbol) {
   return heap[symbol + 2];
-}
-
-char *symbol_buf_end(int symbol) {
-  return string_pool + heap[symbol + 1] + heap[symbol + 2];
 }
 
 int symbol_type(int symbol) {
