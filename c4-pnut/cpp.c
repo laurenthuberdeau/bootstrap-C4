@@ -159,7 +159,7 @@ void restore_include_context() {
   if (fd_dirname != 0) free(fd_dirname);
   // We skip freeing the filepath because it may belong to the string pool
 
-  include_stack = include_stack -IS_SZ;
+  include_stack = include_stack - IS_SZ;
   fd            = (int)   include_stack[IS_FD];
   fd_filepath   = (char*) include_stack[IS_PATH];
   fd_dirname    = (char*) include_stack[IS_DIR];
@@ -1513,12 +1513,36 @@ int parse_expression();
 int parse_primary_expression() {
   int result;
 
-  if      (tok == CHARACTER)  { result = val; }
-  else if (tok == INTEGER)    { result = -val; }
-  else                        { syntax_error("literal expected"); }
+  if      (tok == CHARACTER)  { result = val; get_tok(); return result; }
+  else if (tok == INTEGER)    { result = -val; get_tok(); return result; }
+  else if (tok == DEFINED_KW) {
+    get_tok();
+    if (tok == '(') {
+      get_tok_macro(1);
+      if (tok == IDENTIFIER || tok == MACRO) { // defined (<identifier|macro>)
+        result = tok == MACRO;
+        get_tok_macro(1);
+        expect_tok(')');
+        return result;
+      }
+    } else if (tok == IDENTIFIER || tok == MACRO) { // defined <identifier|macro>
+      result = tok == MACRO;
+      get_tok_macro(1);
+      return result;
+    }
 
-  get_tok();
-  return result;
+    // Fell through => syntax error
+    syntax_error("defined function expects identifier as argument");
+  }
+  else if (tok == '(') {
+    get_tok();
+    result = parse_expression();
+    expect_tok(')');
+    return result;
+  }
+  else {
+    syntax_error("literal expected");
+  }
 }
 
 int parse_unary_expression() {
