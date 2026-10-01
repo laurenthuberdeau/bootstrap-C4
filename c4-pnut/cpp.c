@@ -427,9 +427,9 @@ int macro_ident;      // The identifier of the macro being expanded (if any)
 int macro_args_count; // Number of arguments for the current macro being expanded
 
 int prev_macro_mask() {
-  // Either at the end of the stack, or the previous entry is masked off.
+  // Mask of parent if/elif block, if any. Default to true if if at the top level.
   return if_macro_stack == if_macro_stack_start
-      || (if_macro_stack - IF_MACRO_SIZE)[IF_MACRO_MASK] == 0;
+      || (if_macro_stack - IF_MACRO_SIZE)[IF_MACRO_MASK] != 0;
 }
 
 void push_if_macro_mask(int new_mask) {
@@ -1089,7 +1089,6 @@ void return_to_parent_macro() {
 void begin_macro_expansion(int ident, int tokens, int args) {
   if (macro_stack >= macro_stack_end - MACRO_SIZE)
     fatal_error("Macro recursion depth exceeded.");
-
 
   macro_stack[MACRO_TOKS] = macro_tok_lst;
   macro_stack[MACRO_ARGS] = macro_args;
