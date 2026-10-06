@@ -521,7 +521,8 @@ int main(int argc, char **argv)
   // report any function that was called but never defined
   id = sym;
   while (id[Tk]) {
-    if (id[Class] == Frwd) { printf("undefined function\n"); return -1; }
+    // Error on forward declaration that were never defined but used.
+    if (id[Class] == Frwd && id[Val]) { printf("undefined function: %s\n", (char *)id[Name]); return -1; }
     id = id + Idsz;
   }
 
