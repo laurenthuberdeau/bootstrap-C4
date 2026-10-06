@@ -364,7 +364,7 @@ void stmt()
 
 int main(int argc, char **argv)
 {
-  int fd, bt, ty, poolsz, *idmain;
+  int fd, bt, ty, poolsz, *idmain, *fsz;
   int *pc, *sp, *bp, a, cycle; // vm registers
   int i, *t, *b; // temps
 
@@ -460,6 +460,8 @@ int main(int argc, char **argv)
           if (tk != '{') { printf("%d: bad function definition\n", line); return -1; }
           loc = ++i;
           next();
+          // Function prologue: ENT <localsize>
+          *++e = ENT; *++e = 0; fsz = e;
           while (tk == Int || tk == Char) {
             bt = (tk == Int) ? INT : CHAR;
             next();
@@ -472,11 +474,17 @@ int main(int argc, char **argv)
               id[HType]  = id[Type];  id[Type] = ty;
               id[HVal]   = id[Val];   id[Val] = ++i;
               next();
+              if (tk == Assign) { // var initializer
+                next();
+                *++e = LEA; *++e = loc - i; *++e = PSH; // push var address
+                expr(Assign);                           // acc = init value
+                *++e = (ty == CHAR) ? SC : SI;;         // store acc into var
+              }
               if (tk == ',') next();
             }
             next();
           }
-          *++e = ENT; *++e = i - loc;
+          *fsz = i - loc; // patch ENT with the number of locals
           while (tk != '}') stmt();
           *++e = LEV;
         }
