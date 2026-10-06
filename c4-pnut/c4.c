@@ -561,7 +561,7 @@ int main(int argc, char **argv)
     else if (i == DIV) a = *sp++ /  a;
     else if (i == MOD) a = *sp++ %  a;
 
-    else if (i == OPEN) a = open((char *)sp[1], *sp);
+    else if (i == OPEN) { i = pc[1]; a = open((char *)sp[i - 1], (int)sp[i - 2], i > 2 ? *sp : 0); }
     else if (i == READ) a = read(sp[2], (char *)sp[1], *sp);
     else if (i == CLOS) a = close(*sp);
     else if (i == WRIT) a = write(sp[2], (char *)sp[1], *sp);
