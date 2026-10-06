@@ -109,7 +109,9 @@ void next()
       pp = data;
       while (*p != 0 && *p != tk) {
         if ((ival = *p++) == '\\') {
-          if ((ival = *p++) == 'n') ival = '\n';
+          ival = *p++;
+          if      (ival == '0') ival = '\0';
+          else if (ival == 'n') ival = '\n';
         }
         if (tk == '"') *data++ = ival;
       }
