@@ -366,7 +366,7 @@ int main(int argc, char **argv)
 {
   int fd, bt, ty, poolsz, *idmain, *fsz;
   int *pc, *sp, *bp, a, cycle; // vm registers
-  int i, *t, *b; // temps
+  int i, v, *t, *b, *gd; // temps
 
   --argc; ++argv;
   if (argc > 0 && **argv == '-' && (*argv)[1] == 's') { src = 1; --argc; ++argv; }
@@ -498,9 +498,19 @@ int main(int argc, char **argv)
           id = id + Idsz;
         }
       }
-      else {
+      else { // global variable, with optional constant initializer
         id[Class] = Glo;
         id[Val] = (int)data;
+        gd = id;
+        if (tk == Assign) {
+          next();
+          if      (tk == Num) { v = ival; }
+          else if (tk == Sub) { next(); v = -ival; }
+          if (tk != Num) { printf("%d: bad global initializer\n", line); exit(-1); }
+          next();
+          if (gd[Type] == CHAR) *(char *)gd[Val] = v; // pre-init global var slot
+          else                   *(int *)gd[Val] = v;
+        }
         data = data + sizeof(int);
       }
       if (tk == ',') next();
