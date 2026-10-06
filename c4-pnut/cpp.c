@@ -1799,7 +1799,7 @@ int main(int argc, char **argv) {
   string_pool_alloc = 0;
 
   heap_size = 131072; // 128 KB
-  heap = malloc(heap_size);
+  heap = malloc(heap_size * sizeof(int));
   heap_alloc = hash_table_prime;
 
   if_macro_stack = if_macro_stack_start = malloc(20 * IF_MACRO_SIZE * sizeof(int));
