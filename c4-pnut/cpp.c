@@ -1515,7 +1515,7 @@ int parse_primary_expression() {
   if      (tok == CHARACTER)  { result = val; get_tok(); return result; }
   else if (tok == INTEGER)    { result = -val; get_tok(); return result; }
   else if (tok == DEFINED_KW) {
-    get_tok();
+    get_tok_macro(1);
     if (tok == '(') {
       get_tok_macro(1);
       if (tok == IDENTIFIER || tok == MACRO) { // defined (<identifier|macro>)
@@ -1538,6 +1538,12 @@ int parse_primary_expression() {
     result = parse_expression();
     expect_tok(')');
     return result;
+  }
+  else if (tok == IDENTIFIER) {
+    // Macros are expanded while tokenizing, so an identifier that is still
+    // here is undefined: like the C preprocessor, count it as 0.
+    get_tok();
+    return 0;
   }
   else {
     syntax_error("literal expected");
