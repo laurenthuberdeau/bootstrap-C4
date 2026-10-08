@@ -478,7 +478,7 @@ int main(int argc, char **argv)
                 next();
                 *++e = LEA; *++e = loc - i; *++e = PSH; // push var address
                 expr(Assign);                           // acc = init value
-                *++e = (ty == CHAR) ? SC : SI;;         // store acc into var
+                *++e = (ty == CHAR) ? SC : SI;         // store acc into var
               }
               if (tk == ',') next();
             }
@@ -522,7 +522,8 @@ int main(int argc, char **argv)
   id = sym;
   while (id[Tk]) {
     // Error on forward declaration that were never defined but used.
-    if (id[Class] == Frwd && id[Val]) { printf("undefined function: %s\n", (char *)id[Name]); return -1; }
+    // the hash's lower 6 bits are the length of the identifier name.
+    if (id[Class] == Frwd && id[Val]) { printf("undefined function: %*.s\n", id[Hash] & 63, (char *)id[Name]); return -1; }
     id = id + Idsz;
   }
 
