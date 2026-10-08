@@ -1641,17 +1641,39 @@ int parse_expression() {
   return result;
 }
 
-void print_string_char(int c) {
-  if (c == 7)       putstr("\\a");
-  else if (c == 8)  putstr("\\b");
-  else if (c == 12) putstr("\\f");
-  else if (c == 10) putstr("\\n");
-  else if (c == 13) putstr("\\r");
-  else if (c == 9)  putstr("\\t");
-  else if (c == 11) putstr("\\v");
-  else if (c == '\\' || c == '\'' || c == '"') { putchar('\\'); putchar(c); }
-  else if (c < 32 || c > 126) { putchar('\\'); putint(c >> 6); putint((c >> 3) & 7); putint(c & 7); }
-  else putchar(c);
+int no_escape_chars;
+
+// Print a character in a string literal, escaping it if necessary.
+// The no_escape_chars flag indicates to output all characters as-is, except for
+// the characters that delimit strings (", ' and \0) and the backslash itself,
+// which are always escaped.
+//
+// The next character is needed to avoid ambiguity in the case of octal escapes,
+// because an octal escape consumes up to 3 octal digits that follows it:
+// printing "\0" in front of a '4' would read back as "\04". So the short form
+// is used only where it cannot be misread.
+// next is the next character in the string, or 0 if this is the last character.
+void print_string_char(int c, int next) {
+  if (no_escape_chars) {
+    if (c == '\\' || c == '"' || c == '\'' || c == '\0') { putchar('\\');  putchar(c); }
+    else putchar(c);
+  } else {
+    c = c & 255; // c in [0, 255]
+    if (c == 7)       putstr("\\a");
+    else if (c == 8)  putstr("\\b");
+    else if (c == 12) putstr("\\f");
+    else if (c == 10) putstr("\\n");
+    else if (c == 13) putstr("\\r");
+    else if (c == 9)  putstr("\\t");
+    else if (c == 11) putstr("\\v");
+    else if (c == '\\' || c == '\'' || c == '"') { putchar('\\'); putchar(c); }
+    else if (c < 32 || c > 126) {
+      putchar('\\');
+      if (c == 0 && !(next >= '0' && next <= '7')) { putchar('0'); }
+      else { putint(c >> 6); putint((c >> 3) & 7); putint(c & 7); }
+    }
+    else putchar(c);
+  }
 }
 
 void print_tok_string(int symbol) {
@@ -1661,7 +1683,8 @@ void print_tok_string(int symbol) {
   string_end = string_start + symbol_len(symbol);
 
   while (string_start < string_end) {
-    print_string_char(*string_start);
+    print_string_char(*string_start,
+        string_start + 1 < string_end ? string_start[1] : 0);
     string_start = string_start + 1;
   }
 }
@@ -1736,7 +1759,7 @@ void print_tok(int tok, int val) {
   else if (tok == INTEGER)      putint(-val);
   else if (tok == CHARACTER) {
     putchar('\'');
-    print_string_char(val);
+    print_string_char(val, 0);
     putchar('\'');
   } else if (tok == STRING) {
     putchar('"');
@@ -1776,7 +1799,7 @@ int main(int argc, char **argv) {
   string_pool_alloc = 0;
 
   heap_size = 131072; // 128 KB
-  heap = malloc(heap_size);
+  heap = malloc(heap_size * sizeof(int));
   heap_alloc = hash_table_prime;
 
   if_macro_stack = if_macro_stack_start = malloc(20 * IF_MACRO_SIZE * sizeof(int));
@@ -1792,6 +1815,8 @@ int main(int argc, char **argv) {
 
   macro_stack = macro_stack_start = malloc(100 * MACRO_SIZE * sizeof(int));
   macro_stack_end = macro_stack_start + 100 * MACRO_SIZE;
+
+  no_escape_chars = 0;
 
   init_ident_table();
   init_builtin_macros();
@@ -1817,6 +1842,8 @@ int main(int argc, char **argv) {
         } else {
           include_search_path = argv[i] + 2; // skip '-I'
         }
+      } else if (memcmp(argv[i], "--no-escape-chars", 17) == 0) {
+        no_escape_chars = 1;
       } else {
         putstr("Option "); putstr(argv[i]); putchar('\n');
         fatal_error("unknown option");

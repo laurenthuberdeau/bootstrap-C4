@@ -40,7 +40,7 @@ enum {
 // opcodes
 enum { LEA ,IMM ,JMP ,JSR ,BZ  ,BNZ ,ENT ,ADJ ,LEV ,LI  ,LC  ,SI  ,SC  ,PSH ,
        OR  ,XOR ,AND ,EQ  ,NE  ,LT  ,GT  ,LE  ,GE  ,SHL ,SHR ,ADD ,SUB ,MUL ,DIV ,MOD ,
-       OPEN,READ,CLOS,PRTF,MALC,FREE,MSET,MCMP,EXIT };
+       OPEN,READ,CLOS,PRTF,MALC,FREE,MSET,MCMP,WRIT,EXIT };
 
 // types
 enum { CHAR, INT, PTR };
@@ -61,7 +61,7 @@ void next()
         while (le < e) {
           printf("%8.4s", &"LEA ,IMM ,JMP ,JSR ,BZ  ,BNZ ,ENT ,ADJ ,LEV ,LI  ,LC  ,SI  ,SC  ,PSH ,"
                            "OR  ,XOR ,AND ,EQ  ,NE  ,LT  ,GT  ,LE  ,GE  ,SHL ,SHR ,ADD ,SUB ,MUL ,DIV ,MOD ,"
-                           "OPEN,READ,CLOS,PRTF,MALC,FREE,MSET,MCMP,EXIT,"[*++le * 5]);
+                           "OPEN,READ,CLOS,PRTF,MALC,FREE,MSET,MCMP,WRIT,EXIT,"[*++le * 5]);
           if (*le <= ADJ) printf(" %d\n", *++le); else printf("\n");
         }
       }
@@ -109,7 +109,9 @@ void next()
       pp = data;
       while (*p != 0 && *p != tk) {
         if ((ival = *p++) == '\\') {
-          if ((ival = *p++) == 'n') ival = '\n';
+          ival = *p++;
+          if      (ival == '0') ival = '\0';
+          else if (ival == 'n') ival = '\n';
         }
         if (tk == '"') *data++ = ival;
       }
@@ -362,9 +364,9 @@ void stmt()
 
 int main(int argc, char **argv)
 {
-  int fd, bt, ty, poolsz, *idmain;
+  int fd, bt, ty, poolsz, *idmain, *fsz;
   int *pc, *sp, *bp, a, cycle; // vm registers
-  int i, *t, *b; // temps
+  int i, v, *t, *b, *gd; // temps
 
   --argc; ++argv;
   if (argc > 0 && **argv == '-' && (*argv)[1] == 's') { src = 1; --argc; ++argv; }
@@ -384,7 +386,7 @@ int main(int argc, char **argv)
   memset(data, 0, poolsz);
 
   p = "char else enum if int return sizeof while break continue "
-      "open read close printf malloc free memset memcmp exit void main";
+      "open read close printf malloc free memset memcmp write exit void main";
   i = Char; while (i <= Continue) { next(); id[Tk] = i++; } // add keywords to symbol table
   i = OPEN; while (i <= EXIT) { next(); id[Class] = Sys; id[Type] = INT; id[Val] = i++; } // add library to symbol table
   next(); id[Tk] = Char; // handle void type
@@ -458,6 +460,8 @@ int main(int argc, char **argv)
           if (tk != '{') { printf("%d: bad function definition\n", line); return -1; }
           loc = ++i;
           next();
+          // Function prologue: ENT <localsize>
+          *++e = ENT; *++e = 0; fsz = e;
           while (tk == Int || tk == Char) {
             bt = (tk == Int) ? INT : CHAR;
             next();
@@ -470,11 +474,17 @@ int main(int argc, char **argv)
               id[HType]  = id[Type];  id[Type] = ty;
               id[HVal]   = id[Val];   id[Val] = ++i;
               next();
+              if (tk == Assign) { // var initializer
+                next();
+                *++e = LEA; *++e = loc - i; *++e = PSH; // push var address
+                expr(Assign);                           // acc = init value
+                *++e = (ty == CHAR) ? SC : SI;         // store acc into var
+              }
               if (tk == ',') next();
             }
             next();
           }
-          *++e = ENT; *++e = i - loc;
+          *fsz = i - loc; // patch ENT with the number of locals
           while (tk != '}') stmt();
           *++e = LEV;
         }
@@ -488,9 +498,19 @@ int main(int argc, char **argv)
           id = id + Idsz;
         }
       }
-      else {
+      else { // global variable, with optional constant initializer
         id[Class] = Glo;
         id[Val] = (int)data;
+        gd = id;
+        if (tk == Assign) {
+          next();
+          if      (tk == Num) { v = ival; }
+          else if (tk == Sub) { next(); v = -ival; }
+          if (tk != Num) { printf("%d: bad global initializer\n", line); exit(-1); }
+          next();
+          if (gd[Type] == CHAR) *(char *)gd[Val] = v; // pre-init global var slot
+          else                   *(int *)gd[Val] = v;
+        }
         data = data + sizeof(int);
       }
       if (tk == ',') next();
@@ -501,7 +521,9 @@ int main(int argc, char **argv)
   // report any function that was called but never defined
   id = sym;
   while (id[Tk]) {
-    if (id[Class] == Frwd) { printf("undefined function\n"); return -1; }
+    // Error on forward declaration that were never defined but used.
+    // the hash's lower 6 bits are the length of the identifier name.
+    if (id[Class] == Frwd && id[Val]) { printf("undefined function: %*.s\n", id[Hash] & 63, (char *)id[Name]); return -1; }
     id = id + Idsz;
   }
 
@@ -524,7 +546,7 @@ int main(int argc, char **argv)
       printf("%d> %.4s", cycle,
         &"LEA ,IMM ,JMP ,JSR ,BZ  ,BNZ ,ENT ,ADJ ,LEV ,LI  ,LC  ,SI  ,SC  ,PSH ,"
          "OR  ,XOR ,AND ,EQ  ,NE  ,LT  ,GT  ,LE  ,GE  ,SHL ,SHR ,ADD ,SUB ,MUL ,DIV ,MOD ,"
-         "OPEN,READ,CLOS,PRTF,MALC,FREE,MSET,MCMP,EXIT,"[i * 5]);
+         "OPEN,READ,CLOS,PRTF,MALC,FREE,MSET,MCMP,WRIT,EXIT,"[i * 5]);
       if (i <= ADJ) printf(" %d\n", *pc); else printf("\n");
     }
     if      (i == LEA) a = (int)(bp + *pc++);                             // load local address
@@ -559,15 +581,16 @@ int main(int argc, char **argv)
     else if (i == DIV) a = *sp++ /  a;
     else if (i == MOD) a = *sp++ %  a;
 
-    else if (i == OPEN) a = open((char *)sp[1], *sp);
+    else if (i == OPEN) { i = pc[1]; a = open((char *)sp[i - 1], (int)sp[i - 2], i > 2 ? *sp : 0); }
     else if (i == READ) a = read(sp[2], (char *)sp[1], *sp);
     else if (i == CLOS) a = close(*sp);
+    else if (i == WRIT) a = write(sp[2], (char *)sp[1], *sp);
     else if (i == PRTF) { t = sp + pc[1]; a = printf((char *)t[-1], t[-2], t[-3], t[-4], t[-5], t[-6]); }
     else if (i == MALC) a = (int)malloc(*sp);
     else if (i == FREE) free((void *)*sp);
     else if (i == MSET) a = (int)memset((char *)sp[2], sp[1], *sp);
     else if (i == MCMP) a = memcmp((char *)sp[2], (char *)sp[1], *sp);
-    else if (i == EXIT) { printf("exit(%d) cycle = %d\n", *sp, cycle); return *sp; }
+    else if (i == EXIT) { if (debug) printf("exit(%d) cycle = %d\n", *sp, cycle); return *sp; }
     else { printf("unknown instruction = %d! cycle = %d\n", i, cycle); return -1; }
   }
 }
