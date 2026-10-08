@@ -1842,7 +1842,7 @@ int main(int argc, char **argv) {
         } else {
           include_search_path = argv[i] + 2; // skip '-I'
         }
-      } else if (memcmp(argv[i], "--no-escape-chars", 2) == 0) {
+      } else if (memcmp(argv[i], "--no-escape-chars", 17) == 0) {
         no_escape_chars = 1;
       } else {
         putstr("Option "); putstr(argv[i]); putchar('\n');
