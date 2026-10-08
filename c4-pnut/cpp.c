@@ -1515,7 +1515,7 @@ int parse_primary_expression() {
   if      (tok == CHARACTER)  { result = val; get_tok(); return result; }
   else if (tok == INTEGER)    { result = -val; get_tok(); return result; }
   else if (tok == DEFINED_KW) {
-    get_tok();
+    get_tok_macro(1);
     if (tok == '(') {
       get_tok_macro(1);
       if (tok == IDENTIFIER || tok == MACRO) { // defined (<identifier|macro>)
