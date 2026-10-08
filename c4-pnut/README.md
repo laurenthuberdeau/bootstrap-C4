@@ -7,7 +7,7 @@ bootstrap [`pnut-exe`](https://github.com/udem-dlteam/pnut). These features are:
 2. Support for `continue` and `break` statements in loops.
 3. Support for the `write` libc function.
 4. Support for the `mode` parameter of the `open` libc function.
-5. Support for `\0` character escape.
+5. Support for the `\{0,a,b,f,n,r,t,v}` character escape.
 6. Support for local variable initializers.
 7. Support for global variable initializers (integer literals only).
 

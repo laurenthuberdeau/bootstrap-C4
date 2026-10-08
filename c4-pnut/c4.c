@@ -111,7 +111,13 @@ void next()
         if ((ival = *p++) == '\\') {
           ival = *p++;
           if      (ival == '0') ival = '\0';
+          else if (ival == 'a') ival = '\a';
+          else if (ival == 'b') ival = '\b';
+          else if (ival == 'f') ival = '\f';
           else if (ival == 'n') ival = '\n';
+          else if (ival == 'r') ival = '\r';
+          else if (ival == 't') ival = '\t';
+          else if (ival == 'v') ival = '\v';
         }
         if (tk == '"') *data++ = ival;
       }
