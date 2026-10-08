@@ -1539,6 +1539,12 @@ int parse_primary_expression() {
     expect_tok(')');
     return result;
   }
+  else if (tok == IDENTIFIER) {
+    // Macros are expanded while tokenizing, so an identifier that is still
+    // here is undefined: like the C preprocessor, count it as 0.
+    get_tok();
+    return 0;
+  }
   else {
     syntax_error("literal expected");
   }
