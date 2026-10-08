@@ -6,9 +6,18 @@ bootstrap [`pnut-exe`](https://github.com/udem-dlteam/pnut). These features are:
 1. Support for forward declarations and mutually recursive functions.
 2. Support for `continue` and `break` statements in loops.
 3. Support for the `write` libc function.
-4. Support the `mode` parameter for the `open` libc function.
-5. Support `\0` character escape.
-6. Support local and global variable initializers.
+4. Support for the `mode` parameter of the `open` libc function.
+5. Support for `\0` character escape.
+6. Support for local variable initializers.
+7. Support for global variable initializers (integer literals only).
+
+These represent a modest size increase to the original c4 of only 67 lines:
+
+```shell
+$ wc c4.c c4-pnut/c4.c
+  528  3817 20498 c4.c
+  595  4424 24234 c4-pnut/c4.c
+```
 
 These additions are all that's required to bootstrap `pnut-exe` from c4. Of
 course, c4 can't read pnut's source code directly, because pnut's source code
@@ -36,12 +45,25 @@ Missing features some people may expect from a C preprocessor:
 - Token pasting
 - Stringizing
 
-Porting part of pnut's source code to c4 also demonstrated that the code is
-already pretty close to the C subset supported by c4. This demonstrates the
-viability of porting the entire `pnut-exe` to c4.
+The following command line options are supported:
 
-To execute:
+- `-D <macro>`: Define `<macro>` as a macro with no value.
+- `-I <path>`: Add `<path>` to the include search path.
+- `--no-escape-chars` to disable escape character processing in string and
+  character literals. This option is used to work around the lack of support for
+  escape characters in c4, except for `\n`, `\0`, `\\`, `\"` and `\'`, and emits
+  raw bytes for all other escape sequences since c4 supports raw bytes in string
+  and character literals.
+
+## Bootstrapping pnut-exe from c4
+
+The rough steps to bootstrap pnut-exe from c4 are as follows:
+
 ```shell
-$ gcc -o c4 c4.c       # Compile c4
-$ ./c4 cpp.c cpp.c    # Execute cpp.c with c4, and preprocess cpp.c
+# Compile c4
+$ gcc -o c4 c4.c
+# Preprocess pnut-exe.c with cpp.c, with the right options for c4 compatibility.
+$ ./c4 cpp.c pnut.c $PNUT_OPTIONS $C4_COMPAT > pnut-exe.c
+# Execute pnut-exe.c with c4 to obtain the pnut-exe executable.
+$ ./c4 pnut-exe.c $PNUT_OPTIONS -o pnut-exe
 ```

@@ -33,8 +33,8 @@ in reproducible builds rooted in [`stage0`](https://github.com/oriansj/stage0).
 
 `c4-pnut/c4.c` is a modified `c4.c` with minimal extensions needed to host
 [`pnut-exe`](https://github.com/udem-dlteam/pnut). A c4-compatible C
-preprocessor is also included in `c4-pnut/cpp.c`, intended to make pnut's source
-code compatible with it. Work is ongoing to port `pnut-exe` to c4.
+preprocessor is also included in `c4-pnut/cpp.c`, to make pnut's source code
+compatible with it.
 
 ## Other ideas
 
